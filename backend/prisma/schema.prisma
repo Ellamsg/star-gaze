@@ -1,0 +1,165 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+model Client {
+  id             String    @id @default(cuid())
+  firstName      String
+  lastName       String?
+  email          String?   @unique @db.VarChar(320) // always stored lowercase
+  phone          String?   @unique @db.VarChar(20) // E.164: +2348012345678
+  marketingOptIn Boolean   @default(false) // consent captured at booking
+  notes          String?   @db.Text // allergies, shape, colour, tech preference
+  lastVisitAt    DateTime? // updated when a booking is COMPLETED
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  appointments Appointment[]
+
+  @@index([createdAt])
+  @@index([lastName, firstName])
+  @@map("clients")
+}
+
+model Appointment {
+  id          String             @id @default(cuid())
+  reference   String             @unique // short code for the client, e.g. NLS-8F3K2
+  manageToken String             @unique // for "view / cancel my booking" links
+  clientId    String
+  client      Client             @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  serviceId   String
+  service     Service            @relation(fields: [serviceId], references: [id])
+  staffId     String?
+  staff       Staff?             @relation(fields: [staffId], references: [id])
+  slotId      String?            @unique
+  slot        AvailabilitySlot?  @relation(fields: [slotId], references: [id], onDelete: SetNull)
+  startAt     DateTime // store UTC
+  endAt       DateTime
+  status      AppointmentStatus  @default(PENDING)
+  price       Decimal            @db.Decimal(10, 2)
+  depositPaid Decimal?           @db.Decimal(10, 2)
+  notes       String?
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+  photos      AppointmentPhoto[]
+  items       AppointmentItem[]
+
+  @@index([clientId, startAt])
+  @@index([startAt])
+  @@index([status])
+  @@map("appointments")
+}
+
+enum SlotStatus {
+  OPEN // visible on the booking page
+  BOOKED // someone claimed it
+  BLOCKED // closed by the studio (holiday, break, day off)
+}
+
+model AvailabilitySlot {
+  id          String      @id @default(cuid())
+  startAt     DateTime // store UTC
+  endAt       DateTime // startAt + slot length
+  status      SlotStatus  @default(OPEN)
+  note        String? // "Lunch break", "Closed for training"
+  staffId     String? // leave null for a single-chair studio
+  staff       Staff?      @relation(fields: [staffId], references: [id])
+  appointment Appointment?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // One slot per time. If you add multiple staff later, change this to
+  // @@unique([startAt, staffId])
+  @@unique([startAt])
+  @@index([startAt, status])
+  @@map("availability_slots")
+}
+
+model AppointmentItem {
+  id            String      @id @default(cuid())
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  serviceId     String
+  service       Service     @relation(fields: [serviceId], references: [id])
+  price         Decimal     @db.Decimal(10, 2)
+  durationMin   Int
+
+  @@unique([appointmentId, serviceId])
+  @@map("appointment_items")
+}
+
+model Service {
+  id           String        @id @default(cuid())
+  name         String
+  slug         String        @unique
+  durationMin  Int
+  price        Decimal       @db.Decimal(10, 2)
+  active       Boolean       @default(true)
+  description  String?       @db.Text
+  appointments Appointment[]
+  items        AppointmentItem[]
+
+  @@map("services")
+}
+
+enum AdminRole {
+  OWNER // everything, money, clients
+  MANAGER // bookings, clients, no settings
+  TECH // own schedule only
+}
+
+model Admin {
+  id           String    @id @default(cuid())
+  email        String    @unique @db.VarChar(320)
+  name         String
+  passwordHash String
+  role         AdminRole @default(OWNER)
+  staffId      String?   @unique // link a tech account to Staff row
+  staff        Staff?    @relation(fields: [staffId], references: [id])
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@map("admins")
+}
+
+model Staff {
+  id                String             @id @default(cuid())
+  name              String
+  role              String? // Nail tech, manager...
+  active            Boolean            @default(true)
+  admin             Admin?
+  appointments      Appointment[]
+  availabilitySlots AvailabilitySlot[]
+  @@map("staff")
+}
+
+model AppointmentPhoto {
+  id            String      @id @default(cuid())
+  url           String
+  appointmentId String
+  appointment   Appointment @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  createdAt     DateTime    @default(now())
+
+  @@index([appointmentId])
+  @@map("appointment_photos")
+}

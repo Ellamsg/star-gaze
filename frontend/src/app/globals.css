@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-display: var(--font-anton);
+  --font-sans: var(--font-dm-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-instrument-serif);
+
+  /* Petal & Lash palette */
+  --color-canvas: #201618;
+  --color-surface: #2a2023;
+  --color-surface-soft: #33262a;
+  --color-cream: #f4ede4;
+  --color-muted: #bdaeb2;
+  --color-pink: #e98ba6;
+  --color-rose: #d97d99;
+  --color-hairline: #3b2c31;
+
+  /* Legacy palette — used by the /nails and /try-on studio pages */
+  --color-ink: #12100e;
+  --color-ink-soft: #1d1a17;
+  --color-paper: #f7f3ed;
+  --color-paper-dim: #ece5db;
+  --color-line: #ddd4c8;
+  --color-blush: #e6c8c0;
+  --color-mauve: #b3807c;
+  --color-oxblood: #4a1418;
+  --color-clay: #c9b6a4;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-cream);
+    font-family: var(--font-dm-sans), system-ui, sans-serif;
+  }
+
+  section[id] {
+    scroll-margin-top: 92px;
+  }
+
+  ::selection {
+    background-color: var(--color-pink);
+    color: var(--color-canvas);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-pink);
+    outline-offset: 3px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Ticker
+ * ------------------------------------------------------------------ */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  animation: marquee 34s linear infinite;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-marquee {
+    animation: none;
+  }
+}
+
+/* Hide scrollbars on the horizontal rails without losing scroll. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ------------------------------------------------------------------ *
+ * Legacy placeholder media tones (studio / try-on pages).
+ * ------------------------------------------------------------------ */
+.tone-blush {
+  background-image: linear-gradient(155deg, #f7e7e1 0%, #e0bab1 52%, #b8827c 100%);
+}
+.tone-mauve {
+  background-image: linear-gradient(155deg, #e6d0d5 0%, #c29aa3 55%, #8f6570 100%);
+}
+.tone-clay {
+  background-image: linear-gradient(155deg, #efe0d0 0%, #cbaf96 55%, #9d7c60 100%);
+}
+.tone-sand {
+  background-image: linear-gradient(155deg, #f2e8d9 0%, #dcc9b0 58%, #b9a184 100%);
+}
+.tone-pearl {
+  background-image: linear-gradient(155deg, #f9f6f1 0%, #e6ded2 58%, #cec3b4 100%);
+}
+.tone-sage {
+  background-image: linear-gradient(155deg, #e0e3d8 0%, #bcc2ac 58%, #949b86 100%);
+}
+.tone-oxblood {
+  background-image: radial-gradient(120% 130% at 32% 12%, #6f2227 0%, #3d1014 58%, #1d0709 100%);
+}
+.tone-ink {
+  background-image: linear-gradient(160deg, #302c28 0%, #17150f 62%, #0b0a08 100%);
+}
+
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.24;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+.sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(180deg, rgb(255 255 255 / 0.22) 0%, rgb(255 255 255 / 0) 45%);
+}
+
+.vertical-rl {
+  writing-mode: vertical-rl;
+}
