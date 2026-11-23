@@ -75,7 +75,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </span>
           <span className="min-w-0">
             <span className="block truncate font-display text-[15px] uppercase tracking-wide text-cream">
-              Petal &amp; Lash
+              Stargaze
             </span>
             <span className="block text-[11px] uppercase tracking-[0.18em] text-muted">Admin</span>
           </span>
@@ -154,7 +154,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </span>
           <span className="min-w-0">
             <span className="block truncate text-[13px] font-semibold leading-tight text-cream">
-              Petal &amp; Lash
+             Stargaze
             </span>
             <span className="block text-[10px] uppercase tracking-[0.18em] text-muted">Admin</span>
           </span>

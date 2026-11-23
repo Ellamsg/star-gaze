@@ -11,6 +11,7 @@ import {
   setSlotStatus,
 } from "@/lib/api/availability";
 import { dayKey, todayKey } from "@/lib/date";
+import { STALE_TIME } from "@/lib/query-config";
 import type { CreateSlotsPayload } from "@/types/availability";
 
 export const availabilityKeys = {
@@ -41,6 +42,7 @@ export function useOpenSlots(
     queryKey: availabilityKeys.open(from, to, minDuration),
     queryFn: () =>
       fetchOpenSlots(from ?? todayKey(), to ?? dayKey(60), minDuration),
+    staleTime: STALE_TIME.openSlots,
   });
 }
 
@@ -50,6 +52,7 @@ export function useAllSlots(from?: string, to?: string, enabled = true) {
     queryKey: availabilityKeys.list(from, to),
     queryFn: () => fetchAllSlots(from ?? todayKey(), to ?? dayKey(30)),
     enabled,
+    staleTime: STALE_TIME.availability,
   });
 }
 

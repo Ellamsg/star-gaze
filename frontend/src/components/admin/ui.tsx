@@ -14,6 +14,8 @@ import {
 } from "@/data/admin";
 import { initials } from "@/lib/date";
 
+import { Spinner } from "@/components/spinner";
+
 import { Icon, type IconName } from "./icons";
 
 export function cn(...values: Array<string | false | null | undefined>): string {
@@ -130,6 +132,8 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "ghost" | "danger";
   size?: "sm" | "md";
   icon?: IconName;
+  /** Shows a spinner and disables the button while an action is running. */
+  loading?: boolean;
 };
 
 const buttonVariants = {
@@ -146,14 +150,18 @@ export function Button({
   variant = "primary",
   size = "md",
   icon,
+  loading = false,
   className,
   children,
   type = "button",
+  disabled,
   ...props
 }: ButtonProps) {
   return (
     <button
       type={type}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
       className={cn(
         "inline-flex shrink-0 items-center justify-center gap-2 rounded-full font-medium transition disabled:cursor-not-allowed disabled:opacity-45",
         size === "sm" ? "h-9 px-3.5 text-[13px]" : "h-11 px-5 text-sm",
@@ -162,7 +170,11 @@ export function Button({
       )}
       {...props}
     >
-      {icon ? <Icon name={icon} size={size === "sm" ? 15 : 17} /> : null}
+      {loading ? (
+        <Spinner size={size === "sm" ? 14 : 16} />
+      ) : icon ? (
+        <Icon name={icon} size={size === "sm" ? 15 : 17} />
+      ) : null}
       {children}
     </button>
   );
@@ -615,6 +627,16 @@ export function EmptyState({
 
 export function Money({ value, className }: { value: number; className?: string }) {
   return <span className={cn("tabular-nums", className)}>{formatNaira(value)}</span>;
+}
+
+/** Pulsing placeholder used while data loads. */
+export function Skeleton({ className }: { className?: string }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={cn("animate-pulse rounded-2xl bg-white/[0.06]", className)}
+    />
+  );
 }
 
 export function Row({

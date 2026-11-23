@@ -11,7 +11,11 @@ export function Providers({ children }: { children: ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
+            // A safe default. Individual resources override this below.
             staleTime: 30_000,
+            // Keep unused admin data around for 10 minutes so going back to a
+            // page can render from cache before it revalidates.
+            gcTime: 10 * 60_000,
             retry: 1,
             refetchOnWindowFocus: false,
           },

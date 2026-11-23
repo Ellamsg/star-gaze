@@ -1,14 +1,15 @@
 import Link from "next/link";
 
-import type { BookingDay, MenuItem } from "@/data/booking";
 import { formatNaira, studio } from "@/data/site";
+import type { DayOption } from "@/types/booking";
+import type { ServiceDTO } from "@/types/service";
 
 import { pillGhost, pillPink } from "./ui";
 
 type BookingConfirmationProps = {
   reference: string;
-  services: MenuItem[];
-  day: BookingDay;
+  services: ServiceDTO[];
+  day: DayOption;
   time: string;
   name: string;
   phone: string;

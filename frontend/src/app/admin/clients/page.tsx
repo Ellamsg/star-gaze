@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import ClientsClient from "./clients-client";
 
 export const metadata: Metadata = {
-  title: "Clients — Petal & Lash Admin",
+  title: "Clients — Stargaze Admin",
   description: "Client list and booking history.",
 };
 

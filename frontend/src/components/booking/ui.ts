@@ -11,3 +11,6 @@ export const pillPink =
 
 export const nextButton =
   "shrink-0 whitespace-nowrap rounded-full bg-pink px-7 py-3 text-[14px] font-semibold text-canvas transition-all hover:bg-rose disabled:cursor-not-allowed disabled:bg-pink/30 disabled:text-canvas/45 disabled:hover:bg-pink/30";
+
+export const backButton =
+  "inline-flex shrink-0 items-center gap-1.5 rounded-full border border-white/15 px-4 py-3 text-[13px] font-medium text-cream transition-colors hover:border-white/35 disabled:cursor-not-allowed disabled:opacity-45";

@@ -10,8 +10,10 @@ import {
   Card,
   EmptyState,
   PageHeader,
+  Skeleton,
   TextInput,
 } from "@/components/admin/ui";
+import { Spinner } from "@/components/spinner";
 import {
   useAllSlots,
   useCancelDay,
@@ -269,12 +271,18 @@ export default function AvailabilityPage() {
           </div>
 
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button type="submit" icon="plus" disabled={busy}>
+            <Button
+              type="submit"
+              icon="plus"
+              loading={createSlots.isPending}
+              disabled={busy}
+            >
               {createSlots.isPending ? "Adding…" : "Add these times"}
             </Button>
             <Button
               variant="secondary"
               onClick={onCloseDay}
+              loading={closeDay.isPending}
               disabled={busy}
             >
               Close entire day
@@ -309,7 +317,7 @@ export default function AvailabilityPage() {
       ) : null}
 
       {isLoading ? (
-        <p className="mt-6 text-sm text-muted">Loading…</p>
+        <AvailabilitySkeleton />
       ) : grouped.length === 0 ? (
         <div className="mt-6">
           <EmptyState
@@ -337,60 +345,114 @@ export default function AvailabilityPage() {
               </div>
 
               <div className="mt-2.5 flex flex-wrap gap-2">
-                {daySlots.map((slot) => (
-                  <div
-                    key={slot.id}
-                    className="flex items-center gap-1.5 rounded-full border border-hairline/70 bg-white/[0.03] py-1 pl-3 pr-1"
-                  >
-                    <span className="text-[12px] tabular-nums text-cream">
-                      {formatTime(slot.time)}
-                    </span>
+                {daySlots.map((slot) => {
+                  const toggling =
+                    setStatus.isPending && setStatus.variables?.id === slot.id;
+                  const removing =
+                    removeSlot.isPending && removeSlot.variables === slot.id;
+                  const cancelling =
+                    cancelBooking.isPending &&
+                    cancelBooking.variables === slot.appointmentId;
 
-                    {slot.status === "BOOKED" ? (
-                      <Badge tone="green">Booked</Badge>
-                    ) : slot.status === "BLOCKED" ? (
-                      <Badge tone="neutral">Closed</Badge>
-                    ) : (
-                      <Badge tone="pink">Open</Badge>
-                    )}
+                  return (
+                    <div
+                      key={slot.id}
+                      className="flex items-center gap-1.5 rounded-full border border-hairline/70 bg-white/[0.03] py-1 pl-3 pr-1"
+                    >
+                      <span className="text-[12px] tabular-nums text-cream">
+                        {formatTime(slot.time)}
+                      </span>
 
-                    {slot.status !== "BOOKED" ? (
-                      <>
+                      {slot.status === "BOOKED" ? (
+                        <Badge tone="green">Booked</Badge>
+                      ) : slot.status === "BLOCKED" ? (
+                        <Badge tone="neutral">Closed</Badge>
+                      ) : (
+                        <Badge tone="pink">Open</Badge>
+                      )}
+
+                      {slot.status !== "BOOKED" ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => onToggle(slot)}
+                            disabled={busy}
+                            aria-busy={toggling || undefined}
+                            className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] text-cream/80 hover:text-cream disabled:cursor-not-allowed"
+                          >
+                            {toggling ? (
+                              <>
+                                <Spinner size={12} />
+                                {slot.status === "OPEN"
+                                  ? "Closing…"
+                                  : "Reopening…"}
+                              </>
+                            ) : slot.status === "OPEN" ? (
+                              "Close"
+                            ) : (
+                              "Reopen"
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onRemove(slot)}
+                            disabled={busy}
+                            aria-label="Delete slot"
+                            className="rounded-full p-1 text-muted hover:text-pink disabled:cursor-not-allowed"
+                          >
+                            {removing ? (
+                              <Spinner size={12} />
+                            ) : (
+                              <Icon name="trash" size={13} />
+                            )}
+                          </button>
+                        </>
+                      ) : slot.appointmentId ? (
                         <button
                           type="button"
-                          onClick={() => onToggle(slot)}
+                          onClick={() => onCancelBooking(slot)}
                           disabled={busy}
-                          className="rounded-full px-2 py-1 text-[11px] text-cream/80 hover:text-cream"
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] text-pink hover:text-cream disabled:cursor-not-allowed"
                         >
-                          {slot.status === "OPEN" ? "Close" : "Reopen"}
+                          {cancelling ? <Spinner size={11} /> : null}
+                          {cancelling ? "Cancelling…" : "Cancel booking"}
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => onRemove(slot)}
-                          disabled={busy}
-                          aria-label="Delete slot"
-                          className="rounded-full p-1 text-muted hover:text-pink"
-                        >
-                          <Icon name="trash" size={13} />
-                        </button>
-                      </>
-                    ) : slot.appointmentId ? (
-                      <button
-                        type="button"
-                        onClick={() => onCancelBooking(slot)}
-                        disabled={busy}
-                        className="rounded-full px-2 py-1 text-[11px] text-pink hover:text-cream"
-                      >
-                        Cancel booking
-                      </button>
-                    ) : null}
-                  </div>
-                ))}
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
             </li>
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Skeleton                                                                   */
+/* -------------------------------------------------------------------------- */
+
+function AvailabilitySkeleton() {
+  return (
+    <div role="status" aria-label="Loading availability" className="mt-4 space-y-2.5">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <div
+          key={index}
+          className="rounded-[24px] border border-hairline/60 bg-surface/70 p-3 sm:p-4"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <Skeleton className="h-3.5 w-28" />
+            <Skeleton className="h-3 w-20" />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Array.from({ length: 5 }).map((__, chip) => (
+              <Skeleton key={chip} className="h-7 w-24 rounded-full" />
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

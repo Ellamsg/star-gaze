@@ -4,22 +4,20 @@ import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 
-import {
-  bookingCategories,
-  bookingServices,
-  type MenuCategory,
-  type MenuItem,
-} from "@/data/booking";
+import { Spinner } from "@/components/spinner";
 import { formatNaira, studio } from "@/data/site";
 import { useCreateAppointment } from "@/hooks/use-appointments";
 import { useOpenSlots } from "@/hooks/use-availability";
+import { useCategories } from "@/hooks/use-categories";
 import { useServices } from "@/hooks/use-services";
-import type { DayOption } from "@/types/booking";
+import { formatDuration } from "@/lib/date";
 import type { GuestFormValues } from "@/types/appointment";
+import type { BookingStep, DayOption } from "@/types/booking";
+import type { ServiceDTO } from "@/types/service";
 
 import { BookingConfirmation } from "./booking-confirmation";
 import { StepProgress } from "./step-progress";
-import { inputBase, nextButton } from "./ui";
+import { backButton, inputBase, nextButton } from "./ui";
 
 const TOTAL_STEPS = 3;
 const GUEST_KEY = "petal.guest";
@@ -35,19 +33,11 @@ function persistGuest(name: string, phone: string) {
   }
 }
 
-function formatMinutes(total: number): string {
-  const hours = Math.floor(total / 60);
-  const minutes = total % 60;
-  if (!hours) return `${minutes} min`;
-  if (!minutes) return `${hours} hr`;
-  return `${hours} hr ${minutes} min`;
-}
-
 export function BookingFlow() {
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState<BookingStep>(0);
 
-  const [category, setCategory] = useState<MenuCategory>("Nails");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [photoName, setPhotoName] = useState<string | null>(null);
 
   const [dayId, setDayId] = useState<string | null>(null);
@@ -63,7 +53,12 @@ export function BookingFlow() {
     isPending: slotsLoading,
     error: slotsQueryError,
   } = useOpenSlots();
-  const { data: dbServices = [] } = useServices({ active: true });
+  const {
+    data: services = [],
+    isPending: servicesLoading,
+    error: servicesQueryError,
+  } = useServices({ active: true });
+  const { data: categories = [] } = useCategories({ active: true });
   const createBooking = useCreateAppointment();
 
   const slotsError =
@@ -71,6 +66,13 @@ export function BookingFlow() {
       ? slotsQueryError.message
       : slotsQueryError
         ? "Could not load open times."
+        : null;
+
+  const servicesError =
+    servicesQueryError instanceof Error
+      ? servicesQueryError.message
+      : servicesQueryError
+        ? "Could not load services."
         : null;
 
   /* ---- guest details form ---- */
@@ -103,9 +105,25 @@ export function BookingFlow() {
     }
   }, [reset]);
 
-  const chosen: MenuItem[] = useMemo(
-    () => bookingServices.filter((item) => selectedIds.includes(item.id)),
-    [selectedIds],
+  const chosen: ServiceDTO[] = useMemo(
+    () => services.filter((service) => selectedIds.includes(service.id)),
+    [services, selectedIds],
+  );
+
+  /* Category tabs only earn their space once there's more than one category. */
+  const showTabs = categories.length > 1;
+  const activeFilter =
+    categoryFilter === "all" ||
+    categories.some((category) => category.id === categoryFilter)
+      ? categoryFilter
+      : "all";
+
+  const visibleServices = useMemo(
+    () =>
+      showTabs && activeFilter !== "all"
+        ? services.filter((service) => service.categoryId === activeFilter)
+        : services,
+    [services, showTabs, activeFilter],
   );
 
   const total = useMemo(
@@ -114,15 +132,13 @@ export function BookingFlow() {
   );
 
   const totalMinutes = useMemo(
-    () => chosen.reduce((sum, item) => sum + Number.parseInt(item.duration, 10), 0),
+    () => chosen.reduce((sum, item) => sum + item.durationMin, 0),
     [chosen],
   );
 
   const days = useMemo<DayOption[]>(() => {
     const seen = new Map<string, DayOption>();
     for (const slot of slots) {
-      // Only show days that have a slot long enough for the chosen services.
-      if (slot.durationMin < totalMinutes) continue;
       if (seen.has(slot.date)) continue;
       const date = new Date(`${slot.date}T12:00:00`);
       seen.set(slot.date, {
@@ -133,21 +149,27 @@ export function BookingFlow() {
       });
     }
     return [...seen.values()];
-  }, [slots, totalMinutes]);
+  }, [slots]);
+
+  /* Fall back to the first day with open times so the time grid shows at once. */
+  const activeDayId = days.some((item) => item.id === dayId)
+    ? dayId
+    : (days[0]?.id ?? null);
 
   const day = useMemo(
-    () => days.find((item) => item.id === dayId) ?? null,
-    [days, dayId],
+    () => days.find((item) => item.id === activeDayId) ?? null,
+    [days, activeDayId],
   );
 
   const slotsForDay = useMemo(
     () =>
       slots
         .filter(
-          (slot) => slot.date === dayId && slot.durationMin >= totalMinutes,
+          (slot) =>
+            slot.date === activeDayId && slot.durationMin >= totalMinutes,
         )
         .sort((a, b) => a.time.localeCompare(b.time)),
-    [slots, dayId, totalMinutes],
+    [slots, activeDayId, totalMinutes],
   );
 
   const chosenSlot = useMemo(
@@ -155,18 +177,9 @@ export function BookingFlow() {
     [slotsForDay, time],
   );
 
-  /** Map the static menu item to its database row by name. */
-  function dbIdFor(item: MenuItem): string | null {
-    return (
-      dbServices.find(
-        (service) => service.name.toLowerCase() === item.name.toLowerCase(),
-      )?.id ?? null
-    );
-  }
-
   const canProceed =
     step === 0
-      ? selectedIds.length > 0
+      ? !servicesLoading && selectedIds.length > 0
       : step === 1
         ? Boolean(chosenSlot)
         : !createBooking.isPending;
@@ -207,9 +220,14 @@ export function BookingFlow() {
     setReference(null);
   }
 
-  function goToStep(next: number) {
+  function goToStep(next: BookingStep) {
     setStep(next);
     window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleBack() {
+    if (step === 0) return;
+    goToStep(step === 2 ? 1 : 0);
   }
 
   const submitBooking = handleSubmit(async (values) => {
@@ -218,13 +236,9 @@ export function BookingFlow() {
       return;
     }
 
-    const serviceIds = chosen
-      .map(dbIdFor)
-      .filter((id): id is string => Boolean(id));
-
-    if (serviceIds.length !== chosen.length) {
+    if (chosen.length !== selectedIds.length) {
       setSubmitError(
-        "One of the selected services isn't set up in the system yet. Please call the studio.",
+        "One of the selected services is no longer available. Please pick again.",
       );
       return;
     }
@@ -234,7 +248,7 @@ export function BookingFlow() {
     try {
       const appointment = await createBooking.mutateAsync({
         slotId: chosenSlot.id,
-        serviceIds,
+        serviceIds: chosen.map((service) => service.id),
         name: values.name.trim(),
         phone: values.phone.trim(),
         note: values.note.trim() || undefined,
@@ -287,7 +301,6 @@ export function BookingFlow() {
 
   function resetFlow() {
     setStep(0);
-    setCategory("Nails");
     setSelectedIds([]);
     setPhotoName(null);
     setDayId(null);
@@ -341,68 +354,92 @@ export function BookingFlow() {
             What are we treating you to?
           </h2>
           <p className="mt-2 text-[14px] leading-relaxed text-muted">
-            Pick as many as you like. Mix nails and lashes in one visit.
+            Pick as many as you like — one visit, one total.
           </p>
 
-          <div
-            role="tablist"
-            aria-label="Treatment type"
-            className="mt-5 grid grid-cols-2 gap-3"
-          >
-            {bookingCategories.map((option) => {
-              const active = option === category;
-              return (
-                <button
-                  key={option}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setCategory(option)}
-                  className={`h-12 rounded-full text-[14px] font-medium sm:h-14 sm:text-[15px] transition-colors ${
-                    active
-                      ? "bg-pink text-canvas"
-                      : "border border-white/15 text-cream hover:border-white/35"
-                  }`}
+          {servicesLoading ? (
+            <ServicesSkeleton />
+          ) : servicesError ? (
+            <p
+              role="alert"
+              className="mt-5 rounded-2xl border border-pink/40 bg-pink/10 px-4 py-3 text-[13px] leading-relaxed text-pink"
+            >
+              {servicesError}
+            </p>
+          ) : services.length === 0 ? (
+            <p className="mt-5 text-[14px] leading-relaxed text-muted">
+              Nothing is bookable right now. Please check back soon or call the
+              studio.
+            </p>
+          ) : (
+            <>
+              {showTabs ? (
+                <div
+                  role="tablist"
+                  aria-label="Service categories"
+                  className="-mx-5 mt-5 flex gap-2 overflow-x-auto px-5 pb-1 sm:-mx-8 sm:px-8"
                 >
-                  {option}
-                </button>
-              );
-            })}
-          </div>
+                  {[{ id: "all", name: "All" }, ...categories].map((category) => {
+                    const active = activeFilter === category.id;
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setCategoryFilter(category.id)}
+                        className={`shrink-0 rounded-full border px-4 py-2 text-[13px] font-medium transition-colors ${
+                          active
+                            ? "border-pink/70 bg-pink/15 text-pink"
+                            : "border-white/10 bg-surface text-muted hover:border-white/25 hover:text-cream"
+                        }`}
+                      >
+                        {category.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
 
-          <ul className="mt-4 flex flex-col gap-2.5">
-            {bookingServices
-              .filter((item) => item.category === category)
-              .map((item) => {
-                const active = selectedIds.includes(item.id);
-                return (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => toggleService(item.id)}
-                      className={`flex w-full items-center justify-between gap-4 rounded-2xl border px-5 py-4 text-left transition-colors ${
-                        active
-                          ? "border-pink/70 bg-pink/10"
-                          : "border-white/5 bg-surface hover:border-white/20"
-                      }`}
-                    >
-                      <span>
-                        <span className="block text-[14.5px] font-semibold leading-snug text-cream">
-                          {item.name}
-                        </span>
-                        <span className="mt-1 block text-[12.5px] text-muted">
-                          {item.duration}
-                        </span>
-                      </span>
-                      <span className="whitespace-nowrap text-[14px] font-semibold tabular-nums text-pink">
-                        {formatNaira(item.price)}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
-          </ul>
+              {visibleServices.length === 0 ? (
+                <p className="mt-4 text-[14px] leading-relaxed text-muted">
+                  Nothing in this category yet — try another tab.
+                </p>
+              ) : (
+                <ul className="mt-4 flex flex-col gap-2.5">
+                  {visibleServices.map((item) => {
+                    const active = selectedIds.includes(item.id);
+                    return (
+                      <li key={item.id}>
+                        <button
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => toggleService(item.id)}
+                          className={`flex w-full items-center justify-between gap-4 rounded-2xl border px-5 py-4 text-left transition-colors ${
+                            active
+                              ? "border-pink/70 bg-pink/10"
+                              : "border-white/5 bg-surface hover:border-white/20"
+                          }`}
+                        >
+                          <span>
+                            <span className="block text-[14.5px] font-semibold leading-snug text-cream">
+                              {item.name}
+                            </span>
+                            <span className="mt-1 block text-[12.5px] text-muted">
+                              {formatDuration(item.durationMin)}
+                            </span>
+                          </span>
+                          <span className="whitespace-nowrap text-[14px] font-semibold tabular-nums text-pink">
+                            {formatNaira(item.price)}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </>
+          )}
 
           <div className="mt-8">
             <h3 className="font-display text-[clamp(1.4rem,4vw,1.8rem)] uppercase leading-none text-cream">
@@ -443,65 +480,77 @@ export function BookingFlow() {
           </h2>
           <p className="mt-2 text-[14px] leading-relaxed text-muted">
             {chosen.length} {chosen.length === 1 ? "service" : "services"} ·{" "}
-            {formatMinutes(totalMinutes)} · {formatNaira(total)}
+            {formatDuration(totalMinutes)} · {formatNaira(total)}
           </p>
 
           <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
             Day
           </p>
           <div className="no-scrollbar -mx-5 mt-2.5 flex gap-2.5 overflow-x-auto px-5 pb-1 sm:-mx-0 sm:px-0">
-            {days.map((item) => {
-              const active = item.id === dayId;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-pressed={active}
-                  onClick={() => pickDay(item.id)}
-                  className={`flex min-w-[62px] shrink-0 flex-col items-center gap-0.5 rounded-2xl border px-4 py-2.5 transition-colors ${
-                    active
-                      ? "border-pink bg-pink text-canvas"
-                      : "border-white/8 bg-surface text-cream hover:border-white/25"
-                  }`}
-                >
-                  <span
-                    className={`text-[10px] uppercase tracking-[0.14em] ${
-                      active ? "text-canvas/70" : "text-muted"
-                    }`}
-                  >
-                    {item.weekday}
-                  </span>
-                  <span className="text-[16px] font-semibold leading-tight">
-                    {item.day}
-                  </span>
-                  <span
-                    className={`text-[10px] uppercase tracking-[0.14em] ${
-                      active ? "text-canvas/70" : "text-muted"
-                    }`}
-                  >
-                    {item.month}
-                  </span>
-                </button>
-              );
-            })}
+            {slotsLoading
+              ? Array.from({ length: 6 }).map((_, index) => (
+                  <div
+                    key={index}
+                    className="h-[70px] min-w-[62px] shrink-0 animate-pulse rounded-2xl bg-white/[0.06]"
+                  />
+                ))
+              : days.map((item) => {
+                  const active = item.id === activeDayId;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => pickDay(item.id)}
+                      className={`flex min-w-[62px] shrink-0 flex-col items-center gap-0.5 rounded-2xl border px-4 py-2.5 transition-colors ${
+                        active
+                          ? "border-pink bg-pink text-canvas"
+                          : "border-white/8 bg-surface text-cream hover:border-white/25"
+                      }`}
+                    >
+                      <span
+                        className={`text-[10px] uppercase tracking-[0.14em] ${
+                          active ? "text-canvas/70" : "text-muted"
+                        }`}
+                      >
+                        {item.weekday}
+                      </span>
+                      <span className="text-[16px] font-semibold leading-tight">
+                        {item.day}
+                      </span>
+                      <span
+                        className={`text-[10px] uppercase tracking-[0.14em] ${
+                          active ? "text-canvas/70" : "text-muted"
+                        }`}
+                      >
+                        {item.month}
+                      </span>
+                    </button>
+                  );
+                })}
           </div>
 
-          {slotsLoading ? (
-            <p className="mt-3 text-[14px] text-muted">Loading open times…</p>
-          ) : slotsError ? (
+          {!slotsLoading && slotsError ? (
             <p className="mt-3 text-[14px] text-pink">{slotsError}</p>
-          ) : days.length === 0 ? (
-            <p className="mt-3 text-[14px] text-muted">
-              {slots.length > 0
-                ? "No open times are long enough for your selection. Please call the studio."
-                : "No open times yet — please check back soon or call the studio."}
-            </p>
           ) : null}
 
           <p className="mt-7 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
             Time
           </p>
-          {day ? (
+          {slotsLoading ? (
+            <div
+              role="status"
+              aria-label="Loading open times"
+              className="mt-2.5 grid grid-cols-3 gap-2.5 sm:grid-cols-4"
+            >
+              {Array.from({ length: 8 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-[42px] animate-pulse rounded-full bg-white/[0.06]"
+                />
+              ))}
+            </div>
+          ) : slotsForDay.length > 0 ? (
             <div className="mt-2.5 grid grid-cols-3 gap-2.5 sm:grid-cols-4">
               {slotsForDay.map((slot) => {
                 const active = slot.time === time;
@@ -522,9 +571,15 @@ export function BookingFlow() {
                 );
               })}
             </div>
+          ) : days.length === 0 ? (
+            <p className="mt-3 text-[14px] leading-relaxed text-muted">
+              No open times yet — please check back soon or call the studio.
+            </p>
           ) : (
-            <p className="mt-3 text-[14px] text-muted">
-              Choose a day to see open times.
+            <p className="mt-3 text-[14px] leading-relaxed text-muted">
+              The open times on this day are shorter than your selection (
+              {formatDuration(totalMinutes)}). Go back and pick a shorter
+              service, choose another day, or call the studio.
             </p>
           )}
           <p className="mt-3 text-[12px] text-muted/80">
@@ -649,22 +704,33 @@ export function BookingFlow() {
 
       {/* Sticky action bar */}
       <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-surface/95 backdrop-blur-md">
-        <div className="mx-auto flex w-full max-w-[760px] items-center justify-between gap-4 px-5 py-3.5 sm:px-8">
-          <p className="min-w-0 truncate text-[13px] text-muted">{status}</p>
+        <div className="mx-auto flex w-full max-w-[760px] items-center gap-3 px-5 py-3.5 sm:px-8">
+          {step > 0 ? (
+            <button
+              type="button"
+              onClick={handleBack}
+              disabled={createBooking.isPending}
+              className={backButton}
+            >
+              <span aria-hidden="true">←</span> Back
+            </button>
+          ) : null}
+
+          <p className="min-w-0 flex-1 truncate text-[13px] text-muted">{status}</p>
+
           <button
             type="button"
             onClick={handleNext}
             disabled={!canProceed}
+            aria-busy={createBooking.isPending || undefined}
             className={nextButton}
           >
             {createBooking.isPending ? (
-              "Booking…"
-            ) : step === 0 ? (
               <span className="flex items-center gap-2">
-                Next
-                <span aria-hidden="true">→</span>
+                <Spinner size={15} />
+                Booking…
               </span>
-            ) : step === 1 ? (
+            ) : step === 0 || step === 1 ? (
               <span className="flex items-center gap-2">
                 Next
                 <span aria-hidden="true">→</span>
@@ -676,5 +742,32 @@ export function BookingFlow() {
         </div>
       </div>
     </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Skeleton                                                                   */
+/* -------------------------------------------------------------------------- */
+
+function ServicesSkeleton() {
+  return (
+    <ul
+      role="status"
+      aria-label="Loading services"
+      className="mt-4 flex flex-col gap-2.5"
+    >
+      {Array.from({ length: 4 }).map((_, index) => (
+        <li
+          key={index}
+          className="flex items-center justify-between gap-4 rounded-2xl border border-white/5 bg-surface px-5 py-4"
+        >
+          <div className="w-full space-y-2">
+            <div className="h-3.5 w-2/5 animate-pulse rounded-full bg-white/10" />
+            <div className="h-3 w-1/5 animate-pulse rounded-full bg-white/[0.06]" />
+          </div>
+          <div className="h-3.5 w-16 shrink-0 animate-pulse rounded-full bg-white/10" />
+        </li>
+      ))}
+    </ul>
   );
 }

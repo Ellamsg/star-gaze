@@ -106,6 +106,20 @@ model AppointmentItem {
   @@map("appointment_items")
 }
 
+model Category {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  slug      String    @unique
+  sortOrder Int       @default(0)
+  active    Boolean   @default(true)
+  services  Service[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([sortOrder])
+  @@map("categories")
+}
+
 model Service {
   id           String        @id @default(cuid())
   name         String
@@ -114,9 +128,12 @@ model Service {
   price        Decimal       @db.Decimal(10, 2)
   active       Boolean       @default(true)
   description  String?       @db.Text
+  categoryId   String?
+  category     Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   appointments Appointment[]
   items        AppointmentItem[]
 
+  @@index([categoryId])
   @@map("services")
 }
 

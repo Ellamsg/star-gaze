@@ -7,6 +7,12 @@ export type ServiceDTO = {
   price: number;
   active: boolean;
   description: string | null;
+  categoryId: string | null;
+  category: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
   appointmentsCount: number;
 };
 
@@ -17,6 +23,7 @@ export type CreateServicePayload = {
   price: number;
   active?: boolean;
   description?: string;
+  categoryId?: string | null;
   /** Optional — auto-generated from name if omitted */
   slug?: string;
 };
@@ -28,6 +35,7 @@ export type UpdateServicePayload = Partial<CreateServicePayload>;
 export type ListServicesParams = {
   active?: boolean;
   q?: string;
+  categoryId?: string;
 };
 
 /** Values managed by react-hook-form on the service create/edit sheet. */
@@ -36,6 +44,7 @@ export type ServiceFormValues = {
   price: string;
   durationMin: string;
   description: string;
+  categoryId: string;
   active: boolean;
 };
 

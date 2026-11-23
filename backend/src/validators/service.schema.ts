@@ -39,6 +39,7 @@ export const createServiceSchema = z.object({
     .min(0, "Price cannot be negative")
     .max(10_000_000, "Price is too large"),
   active: booleanFlag.optional(),
+  categoryId: z.string().trim().min(1, "Category id is required").nullable().optional(),
   description: z
     .string()
     .max(1000, "Description must be at most 1000 characters")
@@ -57,6 +58,7 @@ export const updateServiceSchema = createServiceSchema
 
 export const listServicesQuery = z.object({
   active: booleanFlag.optional(),
+  categoryId: z.string().trim().min(1).optional(),
   q: z.string().trim().max(100).optional(),
 });
 

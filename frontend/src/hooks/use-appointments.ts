@@ -1,6 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 
 import {
   cancelAppointment,
@@ -10,6 +15,8 @@ import {
   updateAppointmentStatus,
 } from "@/lib/api/appointments";
 import { availabilityKeys } from "@/hooks/use-availability";
+import { clientKeys } from "@/hooks/use-clients";
+import { STALE_TIME } from "@/lib/query-config";
 import type {
   AppointmentApiStatus,
   CreateAppointmentPayload,
@@ -20,11 +27,19 @@ export const appointmentKeys = {
   list: () => [...appointmentKeys.all, "list"] as const,
 };
 
+/** A booking change affects the booking list, free slots and client history. */
+function invalidateAppointmentViews(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
+  void queryClient.invalidateQueries({ queryKey: availabilityKeys.all });
+  void queryClient.invalidateQueries({ queryKey: clientKeys.all });
+}
+
 /** Admin list, straight from the database. */
 export function useAppointments() {
   return useQuery({
     queryKey: appointmentKeys.list(),
     queryFn: fetchAppointments,
+    staleTime: STALE_TIME.appointments,
   });
 }
 
@@ -34,13 +49,12 @@ export function useCreateAppointment() {
   return useMutation({
     mutationFn: (payload: CreateAppointmentPayload) =>
       createAppointment(payload),
-    onSuccess: () => {
+    onSuccess: () => invalidateAppointmentViews(queryClient),
+    // A 409 means someone else took the slot, so refresh both views.
+    onError: () => {
       void queryClient.invalidateQueries({ queryKey: availabilityKeys.all });
       void queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
     },
-    // A 409 means someone else took the slot, so refresh the list too.
-    onError: () =>
-      queryClient.invalidateQueries({ queryKey: availabilityKeys.all }),
   });
 }
 
@@ -55,10 +69,7 @@ export function useUpdateAppointmentStatus() {
       id: string;
       status: AppointmentApiStatus;
     }) => updateAppointmentStatus(id, status),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
-      void queryClient.invalidateQueries({ queryKey: availabilityKeys.all });
-    },
+    onSuccess: () => invalidateAppointmentViews(queryClient),
   });
 }
 
@@ -67,10 +78,7 @@ export function useCancelAppointment() {
 
   return useMutation({
     mutationFn: (id: string) => cancelAppointment(id),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: availabilityKeys.all });
-      void queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
-    },
+    onSuccess: () => invalidateAppointmentViews(queryClient),
   });
 }
 
@@ -79,9 +87,6 @@ export function useCancelByToken() {
 
   return useMutation({
     mutationFn: (token: string) => cancelByToken(token),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: availabilityKeys.all });
-      void queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
-    },
+    onSuccess: () => invalidateAppointmentViews(queryClient),
   });
 }

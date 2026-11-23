@@ -5,6 +5,7 @@ import cors from "cors";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
 import { appointmentRouter } from "./routes/appointment.routes";
 import { availabilityRouter } from "./routes/availability.routes";
+import { categoryRouter } from "./routes/category.routes";
 import { clientRouter } from "./routes/client.routes";
 import { serviceRouter } from "./routes/service.routes";
 
@@ -33,6 +34,7 @@ app.get("/api/hello", (_req: Request, res: Response) => {
 });
 
 app.use("/api/services", serviceRouter);
+app.use("/api/categories", categoryRouter);
 app.use("/api/availability", availabilityRouter);
 app.use("/api/appointments", appointmentRouter);
 app.use("/api/clients", clientRouter);

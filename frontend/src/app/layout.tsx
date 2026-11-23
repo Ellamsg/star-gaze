@@ -29,7 +29,7 @@ const instrumentSerif = Instrument_Serif({
 });
 
 export const metadata: Metadata = {
-  title: "Petal & Lash — Nails and lashes studio",
+  title: "Stargaze — Nails and lashes studio",
   description:
     "Nails and lashes, booked in one minute. No account, no stress. Pick your treatments, choose a time, and you're done.",
 };

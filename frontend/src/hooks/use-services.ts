@@ -1,6 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type QueryClient,
+} from "@tanstack/react-query";
 
 import {
   createService,
@@ -8,6 +13,9 @@ import {
   fetchServices,
   updateService,
 } from "@/lib/api/services";
+import { appointmentKeys } from "@/hooks/use-appointments";
+import { clientKeys } from "@/hooks/use-clients";
+import { STALE_TIME } from "@/lib/query-config";
 import type {
   CreateServicePayload,
   ListServicesParams,
@@ -28,7 +36,15 @@ export function useServices(params?: ListServicesParams) {
   return useQuery({
     queryKey: serviceKeys.list(params),
     queryFn: () => fetchServices(params),
+    staleTime: STALE_TIME.services,
   });
+}
+
+/** Service names, prices and durations are also shown in bookings and clients. */
+function invalidateServiceViews(queryClient: QueryClient) {
+  void queryClient.invalidateQueries({ queryKey: serviceKeys.all });
+  void queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
+  void queryClient.invalidateQueries({ queryKey: clientKeys.all });
 }
 
 export function useCreateService() {
@@ -52,8 +68,7 @@ export function useUpdateService() {
       id: string;
       payload: UpdateServicePayload;
     }) => updateService(id, payload),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: serviceKeys.all }),
+    onSuccess: () => invalidateServiceViews(queryClient),
   });
 }
 
@@ -62,7 +77,6 @@ export function useDeleteService() {
 
   return useMutation({
     mutationFn: (id: string) => deleteService(id),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: serviceKeys.all }),
+    onSuccess: () => invalidateServiceViews(queryClient),
   });
 }

@@ -14,7 +14,9 @@ import {
   PageHeader,
   PhotoFrame,
   Segmented,
+  Select,
   Sheet,
+  Skeleton,
   TextInput,
   Textarea,
   Toggle,
@@ -22,12 +24,19 @@ import {
 } from "@/components/admin/ui";
 import type { ServiceTone } from "@/data/admin";
 import {
+  useCategories,
+  useCreateCategory,
+  useDeleteCategory,
+  useUpdateCategory,
+} from "@/hooks/use-categories";
+import {
   useCreateService,
   useDeleteService,
   useServices,
   useUpdateService,
 } from "@/hooks/use-services";
 import { formatDuration } from "@/lib/date";
+import type { CategoryDTO, CategoryFormValues } from "@/types/category";
 import type {
   ServiceDTO,
   ServiceFilter,
@@ -45,6 +54,7 @@ const DEFAULT_VALUES: ServiceFormValues = {
   price: "",
   durationMin: "60",
   description: "",
+  categoryId: "",
   active: true,
 };
 
@@ -71,6 +81,7 @@ export default function ServicesPage() {
   const [filter, setFilter] = useState<ServiceFilter>("all");
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ServiceDTO | null>(null);
+  const [managingCategories, setManagingCategories] = useState(false);
 
   const {
     data: services = [],
@@ -79,10 +90,14 @@ export default function ServicesPage() {
     isFetching,
     refetch,
   } = useServices();
+  const { data: categories = [] } = useCategories();
 
   const createService = useCreateService();
   const updateService = useUpdateService();
   const deleteService = useDeleteService();
+
+  /** New services default to the first category so the form is never blank. */
+  const defaultCategoryId = categories[0]?.id ?? "";
 
   const visible = useMemo(() => {
     return services.filter((service) => {
@@ -108,6 +123,7 @@ export default function ServicesPage() {
         durationMin: Number(values.durationMin),
         price: Number(values.price),
         description: values.description.trim() || undefined,
+        categoryId: values.categoryId || null,
         active: values.active,
       });
 
@@ -129,6 +145,7 @@ export default function ServicesPage() {
           durationMin: Number(values.durationMin),
           price: Number(values.price),
           description: values.description.trim(),
+          categoryId: values.categoryId || null,
           active: values.active,
         },
       });
@@ -171,13 +188,20 @@ export default function ServicesPage() {
         accent="prices"
         description="Everything a client can book, loaded live from the database. Edit a price, write a description, or archive a treatment without losing its booking history."
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               onClick={() => void refetch()}
-              disabled={isFetching}
+              loading={isFetching}
             >
               {isFetching ? "Refreshing…" : "Refresh"}
+            </Button>
+            <Button
+              variant="secondary"
+              icon="note"
+              onClick={() => setManagingCategories(true)}
+            >
+              Categories
             </Button>
             <Button icon="plus" onClick={() => setCreating(true)}>
               Add service
@@ -210,7 +234,7 @@ export default function ServicesPage() {
           </Button>
         </div>
       ) : isPending ? (
-        <p className="text-[13px] text-muted">Loading services from the database…</p>
+        <ServicesSkeleton />
       ) : visible.length === 0 ? (
         <EmptyState
           icon="sparkle"
@@ -268,6 +292,9 @@ export default function ServicesPage() {
                           {service.name}
                         </h3>
                         <p className="mt-0.5 text-[11px] text-muted sm:text-xs">
+                          {service.category?.name
+                            ? `${service.category.name} · `
+                            : ""}
                           {formatDuration(service.durationMin)} ·{" "}
                           {service.appointmentsCount === 0
                             ? "No bookings yet"
@@ -308,7 +335,12 @@ export default function ServicesPage() {
         description="It appears on the booking page as soon as you save."
         footer={
           <div className="flex items-center gap-2">
-            <Button type="submit" form="service-form" className="flex-1">
+            <Button
+              type="submit"
+              form="service-form"
+              className="flex-1"
+              loading={createService.isPending}
+            >
               Create service
             </Button>
             <Button variant="ghost" onClick={() => setCreating(false)}>
@@ -318,7 +350,8 @@ export default function ServicesPage() {
         }
       >
         <ServiceForm
-          defaultValues={DEFAULT_VALUES}
+          defaultValues={{ ...DEFAULT_VALUES, categoryId: defaultCategoryId }}
+          categories={categories}
           pending={createService.isPending}
           onSubmit={handleCreate}
         />
@@ -332,7 +365,12 @@ export default function ServicesPage() {
         description="Changes apply to new bookings only — past appointments keep their price."
         footer={
           <div className="flex items-center gap-2">
-            <Button type="submit" form="service-form" className="flex-1">
+            <Button
+              type="submit"
+              form="service-form"
+              className="flex-1"
+              loading={updateService.isPending}
+            >
               Save changes
             </Button>
             <Button variant="ghost" onClick={() => setEditing(null)}>
@@ -349,8 +387,10 @@ export default function ServicesPage() {
               price: `${editing.price}`,
               durationMin: `${editing.durationMin}`,
               description: editing.description ?? "",
+              categoryId: editing.categoryId ?? "",
               active: editing.active,
             }}
+            categories={categories}
             bookings={editing.appointmentsCount}
             slug={editing.slug}
             pending={updateService.isPending}
@@ -360,7 +400,279 @@ export default function ServicesPage() {
           />
         ) : null}
       </Sheet>
+
+      {/* ── Category manager ──────────────────────────────────────────── */}
+      <CategoryManager
+        open={managingCategories}
+        onClose={() => setManagingCategories(false)}
+      />
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Skeleton                                                                   */
+/* -------------------------------------------------------------------------- */
+
+function ServicesSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-label="Loading services"
+      className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-3"
+    >
+      {Array.from({ length: 6 }).map((_, index) => (
+        <Card key={index} className="overflow-hidden">
+          <Skeleton className="h-[88px] w-full rounded-none sm:aspect-[16/10] sm:h-auto" />
+          <div className="space-y-2 p-4">
+            <Skeleton className="h-4 w-3/4" />
+            <Skeleton className="h-3 w-1/2" />
+            <Skeleton className="h-3 w-full" />
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/*  CategoryManager — add, rename and delete booking categories                */
+/* -------------------------------------------------------------------------- */
+
+function CategoryManager({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { notify } = useAdmin();
+  const {
+    data: categories = [],
+    isPending,
+    isFetching,
+    error,
+    refetch,
+  } = useCategories();
+  const createCategory = useCreateCategory();
+  const updateCategory = useUpdateCategory();
+  const deleteCategory = useDeleteCategory();
+
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { errors },
+  } = useForm<CategoryFormValues>({ defaultValues: { name: "" } });
+
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  const handleCreate = async (values: CategoryFormValues) => {
+    try {
+      const created = await createCategory.mutateAsync({
+        name: values.name.trim(),
+      });
+      notify(`"${created.name}" category added.`, "success");
+      reset({ name: "" });
+    } catch (mutationError) {
+      notify(errorMessage(mutationError), "danger");
+    }
+  };
+
+  const startRename = (category: CategoryDTO) => {
+    setRenamingId(category.id);
+    setRenameValue(category.name);
+  };
+
+  const cancelRename = () => {
+    setRenamingId(null);
+    setRenameValue("");
+  };
+
+  const saveRename = async (category: CategoryDTO) => {
+    const name = renameValue.trim();
+    if (!name || name === category.name) {
+      cancelRename();
+      return;
+    }
+
+    try {
+      const updated = await updateCategory.mutateAsync({
+        id: category.id,
+        payload: { name },
+      });
+      notify(`Category renamed to "${updated.name}".`, "success");
+      cancelRename();
+    } catch (mutationError) {
+      notify(errorMessage(mutationError), "danger");
+    }
+  };
+
+  const handleDelete = async (category: CategoryDTO) => {
+    if (
+      !window.confirm(
+        `Delete "${category.name}"? Empty categories only — move its services to another category first.`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await deleteCategory.mutateAsync(category.id);
+      notify(`"${category.name}" deleted.`, "success");
+    } catch (mutationError) {
+      // Backend answers 409 while services still point at the category.
+      notify(errorMessage(mutationError), "danger");
+    }
+  };
+
+  const fetchError = error ? errorMessage(error) : null;
+
+  return (
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Categories"
+      description="Group services into tabs on the booking page. Rename one, or add your own."
+      footer={
+        <Button
+          variant="secondary"
+          className="w-full"
+          onClick={() => void refetch()}
+          loading={isFetching}
+        >
+          {isFetching ? "Refreshing…" : "Refresh"}
+        </Button>
+      }
+    >
+      <form className="space-y-3" onSubmit={handleSubmit(handleCreate)}>
+        <Field
+          label="New category"
+          htmlFor="category-name"
+          error={errors.name?.message}
+        >
+          <div className="flex gap-2">
+            <TextInput
+              id="category-name"
+              placeholder="e.g. Brows"
+              autoComplete="off"
+              {...register("name", {
+                required: "Name is required.",
+                minLength: { value: 2, message: "At least 2 characters." },
+                maxLength: { value: 60, message: "At most 60 characters." },
+              })}
+            />
+            <Button
+              type="submit"
+              className="shrink-0"
+              loading={createCategory.isPending}
+            >
+              Add
+            </Button>
+          </div>
+        </Field>
+      </form>
+
+      <div className="mt-6">
+        {fetchError ? (
+          <div className="rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-200">
+            <p>{fetchError}</p>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="mt-3"
+              onClick={() => void refetch()}
+            >
+              Try again
+            </Button>
+          </div>
+        ) : isPending ? (
+          <div role="status" aria-label="Loading categories" className="space-y-2">
+            {Array.from({ length: 3 }).map((_, index) => (
+              <Skeleton key={index} className="h-14 w-full rounded-2xl" />
+            ))}
+          </div>
+        ) : categories.length === 0 ? (
+          <p className="text-[13px] leading-relaxed text-muted">
+            No categories yet. Add one above and it appears as a tab on the
+            booking page.
+          </p>
+        ) : (
+          <ul className="divide-y divide-hairline/60 overflow-hidden rounded-2xl border border-hairline/60">
+            {categories.map((category) => {
+              const renaming = renamingId === category.id;
+              const deleting =
+                deleteCategory.isPending &&
+                deleteCategory.variables === category.id;
+
+              return (
+                <li key={category.id} className="px-4 py-3">
+                  {renaming ? (
+                    <div className="flex items-center gap-2">
+                      <TextInput
+                        value={renameValue}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        className="h-10"
+                        autoFocus
+                        aria-label={`Rename ${category.name}`}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void saveRename(category);
+                          }
+                          if (event.key === "Escape") cancelRename();
+                        }}
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => void saveRename(category)}
+                        loading={
+                          updateCategory.isPending &&
+                          updateCategory.variables?.id === category.id
+                        }
+                      >
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={cancelRename}>
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[14px] font-medium text-cream">
+                          {category.name}
+                        </p>
+                        <p className="text-[11.5px] text-muted">
+                          {category.servicesCount}{" "}
+                          {category.servicesCount === 1 ? "service" : "services"}
+                        </p>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => startRename(category)}
+                      >
+                        Rename
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        icon="trash"
+                        aria-label={`Delete ${category.name}`}
+                        loading={deleting}
+                        onClick={() => void handleDelete(category)}
+                      />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </Sheet>
   );
 }
 
@@ -370,6 +682,7 @@ export default function ServicesPage() {
 
 type ServiceFormProps = {
   defaultValues: ServiceFormValues;
+  categories: CategoryDTO[];
   slug?: string;
   bookings?: number;
   pending?: boolean;
@@ -380,6 +693,7 @@ type ServiceFormProps = {
 
 function ServiceForm({
   defaultValues,
+  categories,
   slug,
   bookings = 0,
   pending = false,
@@ -402,6 +716,7 @@ function ServiceForm({
     <form
       id="service-form"
       className="space-y-4"
+      aria-busy={busy}
       onSubmit={handleSubmit(async (values) => {
         await onSubmit(values);
       })}
@@ -468,6 +783,23 @@ function ServiceForm({
         </Field>
       </div>
 
+      {/* Category */}
+      <Field
+        label="Category"
+        htmlFor="service-category"
+        hint="Clients see this as a tab on the booking page."
+        error={errors.categoryId?.message}
+      >
+        <Select id="service-category" {...register("categoryId")}>
+          <option value="">Uncategorised</option>
+          {categories.map((category) => (
+            <option key={category.id} value={category.id}>
+              {category.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+
       {/* Description */}
       <Field
         label="Description"
@@ -496,8 +828,8 @@ function ServiceForm({
 
       {/* Submission state */}
       {busy ? (
-        <p className="rounded-2xl border border-sky-400/25 bg-sky-500/10 px-4 py-3 text-[13px] text-sky-200">
-          Saving to database…
+        <p role="status" className="text-[12px] text-muted">
+          Saving to the database…
         </p>
       ) : null}
 
@@ -520,7 +852,8 @@ function ServiceForm({
             variant="danger"
             size="sm"
             className="mt-3"
-            disabled={bookings > 0 || deletePending}
+            loading={deletePending}
+            disabled={bookings > 0}
             onClick={() => void onDelete()}
           >
             {deletePending ? "Deleting…" : "Delete service"}
