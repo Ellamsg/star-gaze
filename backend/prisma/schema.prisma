@@ -144,19 +144,58 @@ enum AdminRole {
 }
 
 model Admin {
-  id           String    @id @default(cuid())
-  email        String    @unique @db.VarChar(320)
-  name         String
-  passwordHash String
-  role         AdminRole @default(OWNER)
-  staffId      String?   @unique // link a tech account to Staff row
-  staff        Staff?    @relation(fields: [staffId], references: [id])
-  isActive     Boolean   @default(true)
-  lastLoginAt  DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  id                  String    @id @default(cuid())
+  email               String    @unique @db.VarChar(320)
+  name                String
+  passwordHash        String
+  role                AdminRole @default(OWNER)
+  staffId             String?   @unique // link a tech account to Staff row
+  staff               Staff?    @relation(fields: [staffId], references: [id])
+  isActive            Boolean   @default(true)
+  mustChangePassword  Boolean   @default(false)
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  passwordChangedAt   DateTime?
+  lastLoginAt         DateTime?
+  sessions            AdminSession[]
+  auditLogs           AdminAuditLog[]
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@map("admins")
+}
+
+model AdminSession {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  adminId    String
+  admin      Admin     @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  lastSeenAt DateTime  @default(now())
+  ip         String?   @db.VarChar(64)
+  userAgent  String?   @db.VarChar(512)
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([adminId])
+  @@index([expiresAt])
+  @@map("admin_sessions")
+}
+
+model AdminAuditLog {
+  id        String   @id @default(cuid())
+  adminId   String?
+  admin     Admin?   @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  email     String?  @db.VarChar(320)
+  action    String   @db.VarChar(80)
+  ip        String?  @db.VarChar(64)
+  userAgent String?  @db.VarChar(512)
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  @@index([adminId, createdAt])
+  @@index([action, createdAt])
+  @@map("admin_audit_logs")
 }
 
 model Staff {

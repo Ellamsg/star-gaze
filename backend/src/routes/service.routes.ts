@@ -11,6 +11,7 @@ import {
 
 
 import { asyncHandler } from "../lib/async-handler";
+import { requireAuth, requirePermission } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import {
   createServiceSchema,
@@ -30,16 +31,22 @@ serviceRouter.get("/:id", validate({ params: serviceIdParam }), asyncHandler(get
  */
 serviceRouter.post(
   "/",
+  requireAuth,
+  requirePermission("services:write"),
   validate({ body: createServiceSchema }),
   asyncHandler(createService)
 );
 serviceRouter.put(
   "/:id",
+  requireAuth,
+  requirePermission("services:write"),
   validate({ params: serviceIdParam, body: updateServiceSchema }),
   asyncHandler(updateService)
 );
 serviceRouter.delete(
   "/:id",
+  requireAuth,
+  requirePermission("services:write"),
   validate({ params: serviceIdParam }),
   asyncHandler(deleteService)
 );

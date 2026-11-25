@@ -1,9 +1,12 @@
 import "dotenv/config";
 import express, { Request, Response } from "express";
+import cookieParser from "cookie-parser";
 import cors from "cors";
+import helmet from "helmet";
 
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
 import { appointmentRouter } from "./routes/appointment.routes";
+import { authRouter } from "./routes/auth.routes";
 import { availabilityRouter } from "./routes/availability.routes";
 import { categoryRouter } from "./routes/category.routes";
 import { clientRouter } from "./routes/client.routes";
@@ -13,15 +16,43 @@ const app = express();
 // 5000 is taken by macOS AirPlay Receiver on many Macs, so the default is 4000.
 const PORT = Number(process.env.PORT) || 4000;
 
+if (process.env.NODE_ENV === "production") {
+  // Trust the first proxy so rate limiting sees the real client IP.
+  app.set("trust proxy", 1);
+}
+
 /* ------------------------------- middleware ------------------------------- */
 
 const allowedOrigins = (process.env.CORS_ORIGIN ?? "http://localhost:3000")
   .split(",")
   .map((origin) => origin.trim());
 
-app.use(cors({ origin: allowedOrigins }));
+app.use(helmet());
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+/**
+ * Browsers send Origin on state-changing requests. Reject anything that is
+ * not the admin app, which is a cheap second layer behind SameSite=Strict.
+ * Non-browser clients (curl, scripts) have no Origin and are allowed.
+ */
+app.use((req: Request, res: Response, next) => {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+    next();
+    return;
+  }
+
+  const origin = req.get("origin");
+
+  if (origin && !allowedOrigins.includes(origin)) {
+    res.status(403).json({ error: "Request origin is not allowed" });
+    return;
+  }
+
+  next();
+});
 
 /* --------------------------------- routes --------------------------------- */
 
@@ -33,6 +64,7 @@ app.get("/api/hello", (_req: Request, res: Response) => {
   res.json({ message: "Hello from the Express backend 👋" });
 });
 
+app.use("/api/auth", authRouter);
 app.use("/api/services", serviceRouter);
 app.use("/api/categories", categoryRouter);
 app.use("/api/availability", availabilityRouter);

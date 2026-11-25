@@ -8,6 +8,7 @@ import {
   updateAppointmentStatus,
 } from "../controllers/appointment.controller";
 import { asyncHandler } from "../lib/async-handler";
+import { requireAuth, requirePermission } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import {
   appointmentIdParam,
@@ -19,7 +20,12 @@ import {
 export const appointmentRouter = Router();
 
 // Admin list — read-only, used by /admin/appointments.
-appointmentRouter.get("/", asyncHandler(listAppointments));
+appointmentRouter.get(
+  "/",
+  requireAuth,
+  requirePermission("appointments:read"),
+  asyncHandler(listAppointments)
+);
 
 appointmentRouter.post(
   "/",
@@ -35,12 +41,16 @@ appointmentRouter.post(
 
 appointmentRouter.patch(
   "/:id/cancel",
+  requireAuth,
+  requirePermission("appointments:write"),
   validate({ params: appointmentIdParam }),
   asyncHandler(cancelAppointment)
 );
 
 appointmentRouter.patch(
   "/:id/status",
+  requireAuth,
+  requirePermission("appointments:write"),
   validate({
     params: appointmentIdParam,
     body: updateAppointmentStatusSchema,

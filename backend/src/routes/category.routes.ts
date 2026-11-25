@@ -8,6 +8,7 @@ import {
   updateCategory,
 } from "../controllers/category.controller";
 import { asyncHandler } from "../lib/async-handler";
+import { requireAuth, requirePermission } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import {
   categoryIdParam,
@@ -33,16 +34,22 @@ categoryRouter.get(
 // Admin writes.
 categoryRouter.post(
   "/",
+  requireAuth,
+  requirePermission("categories:write"),
   validate({ body: createCategorySchema }),
   asyncHandler(createCategory)
 );
 categoryRouter.put(
   "/:id",
+  requireAuth,
+  requirePermission("categories:write"),
   validate({ params: categoryIdParam, body: updateCategorySchema }),
   asyncHandler(updateCategory)
 );
 categoryRouter.delete(
   "/:id",
+  requireAuth,
+  requirePermission("categories:write"),
   validate({ params: categoryIdParam }),
   asyncHandler(deleteCategory)
 );
