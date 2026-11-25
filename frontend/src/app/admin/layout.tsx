@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { AdminShell } from "@/components/admin/admin-shell";
+import { AdminFrame } from "@/components/admin/admin-frame";
 import { AdminProvider } from "@/components/admin/store";
 
 export const metadata: Metadata = {
@@ -9,10 +9,15 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
+// The admin area is private and session-dependent, so it can never be part of
+// the prerendered shell. Opting out keeps the instant-navigation validation
+// from flagging every admin page in development.
+export const instant = false;
+
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   return (
     <AdminProvider>
-      <AdminShell>{children}</AdminShell>
+      <AdminFrame>{children}</AdminFrame>
     </AdminProvider>
   );
 }

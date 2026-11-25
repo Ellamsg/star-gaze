@@ -39,6 +39,7 @@ categoryRouter.post(
   validate({ body: createCategorySchema }),
   asyncHandler(createCategory)
 );
+
 categoryRouter.put(
   "/:id",
   requireAuth,

@@ -2,6 +2,10 @@ import { Suspense } from "react";
 
 import OverviewClient from "./overview-client";
 
+// Admin data lives behind a session cookie, so this page can never be part of
+// a prerendered shell. Opt out of instant-navigation validation.
+export const instant = false;
+
 export default function AdminOverviewPage() {
   return (
     <Suspense

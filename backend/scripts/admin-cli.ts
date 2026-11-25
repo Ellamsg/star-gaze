@@ -66,13 +66,26 @@ export function assertEmail(email: string): string {
   return result.data;
 }
 
+export function assertStrongPassword(password: string): string {
+  const parsed = passwordSchema.safeParse(password);
+
+  if (!parsed.success) {
+    const issues = parsed.error.issues.map((issue) => `- ${issue.message}`);
+    throw new Error(`Password is too weak:\n${issues.join("\n")}`);
+  }
+
+  return parsed.data;
+}
+
 export async function readNewPassword(
   label = "Password"
 ): Promise<string> {
   const fromEnv = process.env.ADMIN_PASSWORD;
 
-  if (fromEnv) {
-    return fromEnv;
+  // The env var exists for non-interactive runs (CI, a one-off deploy). It
+  // must still meet the same policy as a typed password.
+  if (fromEnv !== undefined) {
+    return assertStrongPassword(fromEnv);
   }
 
   if (!stdin.isTTY) {
@@ -87,12 +100,7 @@ export async function readNewPassword(
     throw new Error("Password cannot be empty.");
   }
 
-  const parsed = passwordSchema.safeParse(password);
-
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((issue) => `- ${issue.message}`);
-    throw new Error(`Password is too weak:\n${issues.join("\n")}`);
-  }
+  assertStrongPassword(password);
 
   const confirm = await promptHidden("Confirm password: ");
 

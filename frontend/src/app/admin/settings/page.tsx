@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 
 import { useAdmin, type Toast } from "@/components/admin/store";
 import { Icon } from "@/components/admin/icons";
@@ -15,12 +16,15 @@ import {
   cn,
 } from "@/components/admin/ui";
 import { roleLabels, type StudioProfile } from "@/data/admin";
+import { useAuth, useChangePassword, useLogoutAll } from "@/hooks/use-auth";
+import type { ChangePasswordFormValues } from "@/types/auth";
 
 type Tab = "profile" | "password" | "notifications";
 
 const passwordRules = [
-  { id: "length", label: "At least 8 characters", test: (value: string) => value.length >= 8 },
+  { id: "length", label: "At least 12 characters", test: (value: string) => value.length >= 12 },
   { id: "upper", label: "One uppercase letter", test: (value: string) => /[A-Z]/.test(value) },
+  { id: "lower", label: "One lowercase letter", test: (value: string) => /[a-z]/.test(value) },
   { id: "number", label: "One number", test: (value: string) => /\d/.test(value) },
   { id: "symbol", label: "One symbol", test: (value: string) => /[^A-Za-z0-9]/.test(value) },
 ];
@@ -213,33 +217,43 @@ function NotificationsPanel({ email }: { email?: string }) {
 }
 
 function PasswordPanel({ notify }: { notify: (message: string, tone?: Toast["tone"]) => void }) {
-  const [current, setCurrent] = useState("");
-  const [next, setNext] = useState("");
-  const [confirm, setConfirm] = useState("");
+  const { data: admin } = useAuth();
+  const changePassword = useChangePassword();
+  const logoutAll = useLogoutAll();
   const [reveal, setReveal] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
+  const {
+    register,
+    handleSubmit,
+    reset,
+    getValues,
+    control,
+    formState: { errors },
+  } = useForm<ChangePasswordFormValues>({
+    defaultValues: {
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+    },
+  });
+
+  const next = useWatch({ control, name: "newPassword" }) ?? "";
+  const confirm = useWatch({ control, name: "confirmPassword" }) ?? "";
   const passed = passwordRules.filter((rule) => rule.test(next)).length;
+  const serverError =
+    changePassword.error instanceof Error ? changePassword.error.message : null;
 
-  const submit = () => {
-    if (current.length === 0) {
-      setError("Enter your current password.");
-      return;
+  const submit = async (values: ChangePasswordFormValues) => {
+    try {
+      await changePassword.mutateAsync({
+        currentPassword: values.currentPassword,
+        newPassword: values.newPassword,
+      });
+      reset();
+      notify("Password updated. Other sessions were signed out.", "success");
+    } catch {
+      // The server error is rendered below the fields.
     }
-    if (passed < passwordRules.length) {
-      setError("The new password doesn’t meet all the rules yet.");
-      return;
-    }
-    if (next !== confirm) {
-      setError("The two new passwords don’t match.");
-      return;
-    }
-
-    setError(null);
-    setCurrent("");
-    setNext("");
-    setConfirm("");
-    notify("Password updated.", "success");
   };
 
   return (
@@ -247,27 +261,49 @@ function PasswordPanel({ notify }: { notify: (message: string, tone?: Toast["ton
       <Card className="p-5">
         <h2 className="text-[15px] font-semibold text-cream">Change password</h2>
         <p className="mt-1 text-[12px] leading-relaxed text-muted">
-          Use the password you sign in with, then pick something you haven’t used elsewhere.
+          Signed in as {admin?.email ?? "the owner"}. Use the password you sign
+          in with, then pick something you haven’t used elsewhere.
         </p>
 
-        <div className="mt-4 space-y-3.5">
-          <Field label="Current password">
+        <form
+          className="mt-4 space-y-3.5"
+          aria-busy={changePassword.isPending}
+          onSubmit={handleSubmit(submit)}
+        >
+          <Field
+            label="Current password"
+            htmlFor="current-password"
+            error={errors.currentPassword?.message}
+          >
             <TextInput
+              id="current-password"
               type={reveal ? "text" : "password"}
-              value={current}
               autoComplete="current-password"
-              onChange={(event) => setCurrent(event.target.value)}
+              {...register("currentPassword", {
+                required: "Enter your current password.",
+                maxLength: { value: 128, message: "At most 128 characters." },
+              })}
             />
           </Field>
 
-          <Field label="New password">
+          <Field
+            label="New password"
+            htmlFor="new-password"
+            error={errors.newPassword?.message}
+          >
             <div className="relative">
               <TextInput
+                id="new-password"
                 type={reveal ? "text" : "password"}
-                value={next}
                 autoComplete="new-password"
-                onChange={(event) => setNext(event.target.value)}
                 className="pr-12"
+                {...register("newPassword", {
+                  required: "Enter a new password.",
+                  maxLength: { value: 128, message: "At most 128 characters." },
+                  validate: (value) =>
+                    passwordRules.every((rule) => rule.test(value)) ||
+                    "The new password doesn’t meet all the rules yet.",
+                })}
               />
               <button
                 type="button"
@@ -282,72 +318,89 @@ function PasswordPanel({ notify }: { notify: (message: string, tone?: Toast["ton
 
           <Field
             label="Confirm new password"
-            error={confirm.length > 0 && confirm !== next ? "Passwords don’t match yet." : undefined}
+            htmlFor="confirm-password"
+            error={
+              errors.confirmPassword?.message ??
+              (confirm.length > 0 && confirm !== next
+                ? "Passwords don’t match yet."
+                : undefined)
+            }
           >
             <TextInput
+              id="confirm-password"
               type={reveal ? "text" : "password"}
-              value={confirm}
               autoComplete="new-password"
-              onChange={(event) => setConfirm(event.target.value)}
+              {...register("confirmPassword", {
+                required: "Confirm the new password.",
+                validate: (value) =>
+                  value === getValues("newPassword") || "Passwords don’t match.",
+              })}
             />
           </Field>
-        </div>
 
-        <div className="mt-4">
-          <div className="flex gap-1.5">
-            {passwordRules.map((rule, index) => (
-              <span
-                key={rule.id}
-                className={cn(
-                  "h-1 flex-1 rounded-full transition",
-                  index < passed ? "bg-pink" : "bg-white/10"
-                )}
-              />
-            ))}
-          </div>
-          <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
-            {passwordRules.map((rule) => {
-              const ok = rule.test(next);
-              return (
-                <li
+          <div className="mt-4">
+            <div className="flex gap-1.5">
+              {passwordRules.map((rule, index) => (
+                <span
                   key={rule.id}
                   className={cn(
-                    "flex items-center gap-2 text-[12px]",
-                    ok ? "text-emerald-300" : "text-muted"
+                    "h-1 flex-1 rounded-full transition",
+                    index < passed ? "bg-pink" : "bg-white/10"
                   )}
-                >
-                  <Icon name={ok ? "check" : "close"} size={13} />
-                  {rule.label}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+                />
+              ))}
+            </div>
+            <ul className="mt-3 grid gap-1.5 sm:grid-cols-2">
+              {passwordRules.map((rule) => {
+                const ok = rule.test(next);
+                return (
+                  <li
+                    key={rule.id}
+                    className={cn(
+                      "flex items-center gap-2 text-[12px]",
+                      ok ? "text-emerald-300" : "text-muted"
+                    )}
+                  >
+                    <Icon name={ok ? "check" : "close"} size={13} />
+                    {rule.label}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
 
-        {error ? (
-          <p className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-200">
-            {error}
-          </p>
-        ) : null}
+          {serverError ? (
+            <p className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-[13px] text-rose-200">
+              {serverError}
+            </p>
+          ) : null}
 
-        <Button className="mt-5 w-full sm:w-auto" icon="lock" onClick={submit}>
-          Update password
-        </Button>
+          <Button
+            type="submit"
+            className="mt-5 w-full sm:w-auto"
+            icon="lock"
+            loading={changePassword.isPending}
+          >
+            {changePassword.isPending ? "Updating…" : "Update password"}
+          </Button>
+        </form>
       </Card>
 
       <Card className="p-5">
         <h2 className="text-[15px] font-semibold text-cream">Sessions</h2>
         <p className="mt-1 text-[12px] leading-relaxed text-muted">
-          Seen something odd? Sign out every device — including this one.
+          Signed in as {admin?.email ?? "the owner"}. Seen something odd? Sign
+          out every device — including this one.
         </p>
         <Button
           variant="secondary"
           size="sm"
           className="mt-3"
           icon="logout"
-          onClick={() => notify("Signed out on all devices.", "success")}
+          loading={logoutAll.isPending}
+          onClick={() => logoutAll.mutate()}
         >
-          Sign out everywhere
+          {logoutAll.isPending ? "Signing out…" : "Sign out everywhere"}
         </Button>
       </Card>
     </div>

@@ -10,6 +10,8 @@ const apiClient = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
+  // The admin session lives in an HttpOnly cookie, never in localStorage.
+  withCredentials: true,
   timeout: 10_000,
 });
 
@@ -17,6 +19,20 @@ const apiClient = axios.create({
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
+    const status = error.response?.status;
+    const url: string = error.config?.url ?? "";
+
+    // A protected request failed because the session expired or was revoked.
+    // AuthGate listens for this and sends the admin back to the login page.
+    if (
+      status === 401 &&
+      typeof window !== "undefined" &&
+      !url.includes("/api/auth/login") &&
+      !url.includes("/api/auth/me")
+    ) {
+      window.dispatchEvent(new Event("admin:unauthorized"));
+    }
+
     const message: string =
       error.response?.data?.error ??
       error.response?.data?.message ??

@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
-import { countByRole, useAdmin } from "./store";
+import { useAdmin } from "./store";
 import { cn, IconButton, Sheet } from "./ui";
 import { Icon, type IconName } from "./icons";
+import { useAuth, useLogout } from "@/hooks/use-auth";
 import { initials } from "@/lib/date";
 
 type NavItem = {
@@ -44,11 +45,13 @@ function isActive(pathname: string, href: string): boolean {
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { state, toasts, dismissToast } = useAdmin();
+  const { data: admin } = useAuth();
+  const logout = useLogout();
   const [moreOpen, setMoreOpen] = useState(false);
 
   const pendingPayments = state.payments.filter((payment) => payment.status === "pending").length;
   const openRefunds = state.refunds.filter((refund) => refund.status === "requested").length;
-  const owner = state.staff.find((member) => member.role === "owner") ?? state.staff[0];
+  const accountName = admin?.name ?? "Admin";
 
   const badgeFor = (href: string): number => {
     if (href === "/admin/payments") return pendingPayments;
@@ -129,11 +132,11 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <div className="rounded-[22px] border border-hairline/70 bg-canvas/40 p-3">
           <div className="flex items-center gap-3">
             <span className="flex h-9 w-9 items-center justify-center rounded-full bg-pink/15 text-[11px] font-semibold text-pink">
-              {initials(owner?.name ?? "Admin")}
+              {initials(accountName)}
             </span>
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-medium text-cream">{owner?.name}</p>
-              <p className="truncate text-[11px] text-muted">{countByRole(state.staff, "stylist")} artists</p>
+              <p className="truncate text-[13px] font-medium text-cream">{accountName}</p>
+              <p className="truncate text-[11px] text-muted">{admin?.email ?? "Signed in"}</p>
             </div>
           </div>
           <Link
@@ -143,6 +146,15 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <Icon name="arrowUpRight" size={13} />
             View site
           </Link>
+          <button
+            type="button"
+            onClick={() => logout.mutate()}
+            disabled={logout.isPending}
+            className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-full py-2 text-[12px] text-muted transition hover:bg-white/5 hover:text-cream disabled:opacity-50"
+          >
+            <Icon name="logout" size={13} />
+            {logout.isPending ? "Signing out…" : "Sign out"}
+          </button>
         </div>
       </aside>
 
@@ -168,7 +180,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
             <Icon name="settings" size={17} />
           </Link>
           <span className="flex h-9 w-9 items-center justify-center rounded-full bg-pink/15 text-[11px] font-semibold text-pink">
-            {initials(owner?.name ?? "Admin")}
+            {initials(accountName)}
           </span>
         </div>
       </header>
@@ -261,6 +273,23 @@ export function AdminShell({ children }: { children: ReactNode }) {
           </span>
           <Icon name="chevronRight" size={16} />
         </Link>
+        <button
+          type="button"
+          onClick={() => {
+            setMoreOpen(false);
+            logout.mutate();
+          }}
+          disabled={logout.isPending}
+          className="mt-2 flex w-full items-center justify-between rounded-2xl border border-rose-400/20 bg-rose-500/[0.06] px-4 py-3.5 text-sm text-rose-200 disabled:opacity-50"
+        >
+          <span className="flex items-center gap-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-500/10">
+              <Icon name="logout" size={17} />
+            </span>
+            {logout.isPending ? "Signing out…" : "Sign out"}
+          </span>
+          <Icon name="chevronRight" size={16} />
+        </button>
       </Sheet>
 
       {/* Toasts */}
