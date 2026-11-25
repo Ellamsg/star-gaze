@@ -6,6 +6,8 @@
  * and refetches in the background.
  */
 export const STALE_TIME = {
+  /** Dashboard totals change when a booking is confirmed, completed or created. */
+  analytics: 30_000,
   /** Services rarely change and are edited from one place. */
   services: 5 * 60_000,
   /** Appointments change when a booking is confirmed, cancelled or completed. */

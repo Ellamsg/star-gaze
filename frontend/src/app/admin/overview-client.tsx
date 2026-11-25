@@ -3,148 +3,131 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { useAdmin } from "@/components/admin/store";
 import { Icon } from "@/components/admin/icons";
 import {
   AppointmentBadge,
   Badge,
+  Button,
   Card,
   EmptyState,
   Money,
   PageHeader,
   SectionHead,
+  Skeleton,
   StatCard,
   cn,
 } from "@/components/admin/ui";
+import { useAuth } from "@/hooks/use-auth";
+import { useOverviewAnalytics } from "@/hooks/use-analytics";
 import {
-  clientById,
-  collectedTotal,
-  serviceById,
-  staffById,
-  type AdminState,
-} from "@/data/admin";
-import {
-  dayKey,
   formatDate,
   formatDateLong,
-  formatDayShort,
-  formatTime,
+  formatInstantDay,
+  formatInstantTime,
   greeting,
-  monthKey,
+  instantDateKey,
   todayKey,
 } from "@/lib/date";
+import { appointmentStatusFromApi } from "@/types/appointment";
+import type { AnalyticsRange } from "@/types/analytics";
 
-type Range = "7d" | "6w" | "12m";
-
-const rangeLabels: Record<Range, string> = {
+const rangeLabels: Record<AnalyticsRange, string> = {
   "7d": "7 days",
   "6w": "6 weeks",
   "12m": "12 months",
 };
 
-function revenueBuckets(state: AdminState, range: Range): Array<{ label: string; value: number }> {
-  const paid = state.payments.filter(
-    (payment) => payment.status === "confirmed" || payment.status === "completed"
-  );
+const rangeNoun: Record<AnalyticsRange, string> = {
+  "7d": "day",
+  "6w": "week",
+  "12m": "month",
+};
 
-  if (range === "12m") {
-    const buckets: Array<{ key: string; label: string; value: number }> = [];
-    const now = new Date();
+function naira(value: number): string {
+  return `₦${value.toLocaleString("en-NG")}`;
+}
 
-    for (let index = 11; index >= 0; index -= 1) {
-      const date = new Date(now.getFullYear(), now.getMonth() - index, 1);
-      const key = `${date.getFullYear()}-${`${date.getMonth() + 1}`.padStart(2, "0")}`;
-      buckets.push({
-        key,
-        label: date.toLocaleString("en-GB", { month: "short" }),
-        value: 0,
-      });
-    }
-
-    for (const payment of paid) {
-      const bucket = buckets.find((item) => item.key === monthKey(payment.date));
-      if (bucket) bucket.value += payment.amount;
-    }
-
-    return buckets.map(({ label, value }) => ({ label, value }));
-  }
-
-  const days = range === "7d" ? 7 : 42;
-  const buckets: Array<{ key: string; label: string; value: number }> = [];
-
-  for (let index = days - 1; index >= 0; index -= 1) {
-    const key = dayKey(-index);
-    buckets.push({ key, label: formatDayShort(key), value: 0 });
-  }
-
-  for (const payment of paid) {
-    const bucket = buckets.find((item) => item.key === payment.date);
-    if (bucket) bucket.value += payment.amount;
-  }
-
-  if (range === "7d") {
-    return buckets.map((bucket) => ({ label: bucket.label.split(" ")[0], value: bucket.value }));
-  }
-
-  // Fold 42 days into 6 weekly buckets, oldest first.
-  const weeks: Array<{ label: string; value: number }> = [];
-  for (let index = 0; index < buckets.length; index += 7) {
-    const slice = buckets.slice(index, index + 7);
-    weeks.push({
-      label: slice[0]?.label ?? "",
-      value: slice.reduce((total, bucket) => total + bucket.value, 0),
-    });
-  }
-  return weeks;
+function plural(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
 }
 
 export default function AdminOverviewPage() {
-  const { state } = useAdmin();
-  const [range, setRange] = useState<Range>("7d");
+  const { data: admin } = useAuth();
+  const [range, setRange] = useState<AnalyticsRange>("7d");
+  const { data, isPending, isError, error, refetch, isFetching } =
+    useOverviewAnalytics(range);
 
-  const today = todayKey();
-  const month = monthKey(today);
-  const owner = state.staff.find((member) => member.role === "owner");
-  const ownerFirstName = owner?.name.split(" ")[0] ?? "there";
+  const firstName = admin?.name?.split(" ")[0] ?? "there";
+  const headerDate = data?.today.date ?? todayKey();
+  const greetingLine = `${greeting()}, ${firstName}`;
 
-  const todaysAppointments = state.appointments
-    .filter((appointment) => appointment.date === today && appointment.status !== "cancelled")
-    .sort((a, b) => a.time.localeCompare(b.time));
+  if (isPending) {
+    return (
+      <div className="space-y-7" aria-busy="true">
+        <PageHeader
+          eyebrow={formatDateLong(headerDate)}
+          title="Good"
+          accent={greetingLine}
+          description="Here's the studio at a glance — today's chair, the money that came in, and anything waiting on you."
+        />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-28 rounded-[22px]" />
+          ))}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
+          <Skeleton className="h-80 rounded-[26px]" />
+          <div className="space-y-4">
+            <Skeleton className="h-44 rounded-[26px]" />
+            <Skeleton className="h-32 rounded-[26px]" />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  const paidToday = state.payments.filter(
-    (payment) =>
-      payment.date === today &&
-      (payment.status === "confirmed" || payment.status === "completed")
+  if (isError || !data) {
+    return (
+      <div className="space-y-7">
+        <PageHeader
+          eyebrow={formatDateLong(headerDate)}
+          title="Good"
+          accent={greetingLine}
+          description="Here's the studio at a glance — today's chair, the money that came in, and anything waiting on you."
+        />
+        <Card className="p-6 text-center">
+          <p className="font-display text-lg text-cream">
+            Couldn’t load the studio numbers
+          </p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] leading-relaxed text-muted">
+            {error instanceof Error
+              ? error.message
+              : "The dashboard couldn’t reach the API. Check that the backend is running."}
+          </p>
+          <Button
+            variant="secondary"
+            className="mx-auto mt-4"
+            onClick={() => refetch()}
+            loading={isFetching}
+          >
+            Try again
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
+  const maxValue = Math.max(
+    ...data.revenueSeries.map((bucket) => bucket.value),
+    1
   );
-
-  const pendingPayments = state.payments.filter((payment) => payment.status === "pending");
-  const pendingTotal = pendingPayments.reduce((total, payment) => total + payment.amount, 0);
-  const openRefunds = state.refunds.filter((refund) => refund.status === "requested");
-  const newClients = state.clients.filter((client) => client.joinedAt.startsWith(month));
-
-  const chart = revenueBuckets(state, range);
-  const maxValue = Math.max(...chart.map((bucket) => bucket.value), 1);
-  const rangeTotal = chart.reduce((total, bucket) => total + bucket.value, 0);
-  const bestBucket = chart.reduce(
-    (best, bucket) => (bucket.value > best.value ? bucket : best),
-    chart[0] ?? { label: "—", value: 0 }
-  );
-
-  const upcoming = state.appointments
-    .filter(
-      (appointment) =>
-        appointment.date >= today &&
-        (appointment.status === "pending" || appointment.status === "confirmed")
-    )
-    .sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`))
-    .slice(0, 4);
 
   return (
     <div className="space-y-7">
       <PageHeader
-        eyebrow={formatDateLong(today)}
+        eyebrow={formatDateLong(data.today.date)}
         title="Good"
-        accent={`${greeting()}, ${ownerFirstName}`}
+        accent={greetingLine}
         description="Here's the studio at a glance — today's chair, the money that came in, and anything waiting on you."
         action={
           <Link
@@ -161,49 +144,63 @@ export default function AdminOverviewPage() {
         <StatCard
           accent
           label="Taken today"
-          value={`₦${collectedTotal(paidToday).toLocaleString("en-NG")}`}
-          hint={`${paidToday.length} payment${paidToday.length === 1 ? "" : "s"} confirmed`}
+          value={naira(data.today.revenue)}
+          hint={`${plural(data.today.paidBookings, "payment")} confirmed`}
           icon="wallet"
         />
         <StatCard
           label="Bookings today"
-          value={`${todaysAppointments.length}`}
-          hint={todaysAppointments.length === 0 ? "The chair is free" : "Across the day"}
+          value={`${data.today.bookings}`}
+          hint={
+            data.today.bookings === 0 ? "The chair is free" : "Across the day"
+          }
           icon="calendar"
         />
         <StatCard
           label="Awaiting payment"
-          value={`₦${pendingTotal.toLocaleString("en-NG")}`}
-          hint={`${pendingPayments.length} payment${pendingPayments.length === 1 ? "" : "s"} to confirm`}
+          value={naira(data.awaiting.amount)}
+          hint={`${plural(data.awaiting.count, "payment")} to confirm`}
           icon="clock"
         />
         <StatCard
           label="New clients"
-          value={`${newClients.length}`}
+          value={`${data.newClientsThisMonth}`}
           hint="Joined this month"
           icon="users"
         />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
-        <Card className="p-5">
+        <Card
+          className={cn(
+            "p-5 transition-opacity",
+            isFetching && "opacity-70"
+          )}
+          aria-busy={isFetching}
+        >
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-muted">Revenue</p>
-              <p className="mt-1 font-display text-[28px] leading-none text-cream">
-                <Money value={rangeTotal} />
+              <p className="text-[11px] uppercase tracking-[0.18em] text-muted">
+                Revenue
               </p>
-              <p className="mt-1 text-xs text-muted">Last {rangeLabels[range]}</p>
+              <p className="mt-1 font-display text-[28px] leading-none text-cream">
+                <Money value={data.rangeTotals.revenue} />
+              </p>
+              <p className="mt-1 text-xs text-muted">
+                Last {rangeLabels[range]}
+              </p>
             </div>
             <div className="flex rounded-full border border-hairline/80 bg-white/[0.03] p-1">
-              {(Object.keys(rangeLabels) as Range[]).map((option) => (
+              {(Object.keys(rangeLabels) as AnalyticsRange[]).map((option) => (
                 <button
                   key={option}
                   type="button"
                   onClick={() => setRange(option)}
                   className={cn(
                     "rounded-full px-3 py-1.5 text-[11px] font-medium transition",
-                    range === option ? "bg-pink text-canvas" : "text-muted hover:text-cream"
+                    range === option
+                      ? "bg-pink text-canvas"
+                      : "text-muted hover:text-cream"
                   )}
                 >
                   {rangeLabels[option]}
@@ -219,24 +216,29 @@ export default function AdminOverviewPage() {
                 range === "12m" ? "min-w-[520px]" : "min-w-full"
               )}
             >
-              {chart.map((bucket, index) => (
+              {data.revenueSeries.map((bucket, index) => (
                 <div
-                  key={`${bucket.label}-${index}`}
+                  key={`${bucket.key}-${index}`}
                   className="group flex h-full flex-1 flex-col items-center gap-2"
                 >
                   <div className="relative flex w-full flex-1 items-end">
                     <div
-                      title={`${bucket.label}: ₦${bucket.value.toLocaleString("en-NG")}`}
+                      title={`${bucket.label}: ${naira(bucket.value)}`}
                       className="w-full rounded-t-xl bg-[linear-gradient(180deg,rgba(233,139,166,0.95),rgba(233,139,166,0.25))] transition-all duration-300 group-hover:opacity-90"
                       style={{
-                        height: `${Math.max(4, (bucket.value / maxValue) * 100)}%`,
+                        height: `${Math.max(
+                          4,
+                          (bucket.value / maxValue) * 100
+                        )}%`,
                       }}
                     />
                     <span className="pointer-events-none absolute -top-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-md bg-canvas px-1.5 py-0.5 text-[10px] text-cream opacity-0 shadow transition group-hover:opacity-100">
-                      ₦{bucket.value.toLocaleString("en-NG")}
+                      {naira(bucket.value)}
                     </span>
                   </div>
-                  <span className="whitespace-nowrap text-[10px] text-muted">{bucket.label}</span>
+                  <span className="whitespace-nowrap text-[10px] text-muted">
+                    {range === "7d" ? bucket.shortLabel : bucket.label}
+                  </span>
                 </div>
               ))}
             </div>
@@ -245,15 +247,14 @@ export default function AdminOverviewPage() {
           <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-hairline/50 pt-3 text-[11px] text-muted">
             <span className="flex items-center gap-1.5">
               <Icon name="chart" size={13} />
-              Best {range === "12m" ? "month" : range === "6w" ? "week" : "day"}:{" "}
+              Best {rangeNoun[range]}:{" "}
               <span className="text-cream">
-                {bestBucket.label} · ₦{bestBucket.value.toLocaleString("en-NG")}
+                {data.bestBucket.label} · {naira(data.bestBucket.value)}
               </span>
             </span>
             <span className="flex items-center gap-1.5">
               <Icon name="wallet" size={13} />
-              {state.payments.filter((payment) => payment.status === "pending").length} payments to
-              confirm
+              {plural(data.awaiting.count, "payment")} to confirm
             </span>
           </div>
         </Card>
@@ -263,15 +264,18 @@ export default function AdminOverviewPage() {
             <SectionHead
               title="Needs attention"
               action={
-                <Badge tone={pendingPayments.length + openRefunds.length > 0 ? "amber" : "green"} dot>
-                  {pendingPayments.length + openRefunds.length > 0 ? "Open" : "Clear"}
+                <Badge
+                  tone={data.awaiting.count > 0 ? "amber" : "green"}
+                  dot
+                >
+                  {data.awaiting.count > 0 ? "Open" : "Clear"}
                 </Badge>
               }
             />
             <ul className="space-y-2.5">
               <li>
                 <Link
-                  href="/admin/payments?status=pending"
+                  href="/admin/appointments?status=pending"
                   className="flex items-center justify-between gap-3 rounded-2xl border border-hairline/60 bg-canvas/30 px-3.5 py-3 transition hover:border-pink/30"
                 >
                   <span className="flex min-w-0 items-center gap-3">
@@ -280,66 +284,68 @@ export default function AdminOverviewPage() {
                     </span>
                     <span className="min-w-0">
                       <span className="block text-[13px] font-medium text-cream">
-                        {pendingPayments.length} payment
-                        {pendingPayments.length === 1 ? "" : "s"} to confirm
+                        {plural(data.awaiting.count, "payment")} to confirm
                       </span>
                       <span className="block text-[11px] text-muted">
-                        <Money value={pendingTotal} /> waiting
+                        <Money value={data.awaiting.amount} /> waiting
                       </span>
                     </span>
                   </span>
-                  <Icon name="chevronRight" size={15} className="shrink-0 text-muted" />
+                  <Icon
+                    name="chevronRight"
+                    size={15}
+                    className="shrink-0 text-muted"
+                  />
                 </Link>
               </li>
               <li>
                 <Link
-                  href="/admin/refunds"
+                  href="/admin/clients"
                   className="flex items-center justify-between gap-3 rounded-2xl border border-hairline/60 bg-canvas/30 px-3.5 py-3 transition hover:border-pink/30"
                 >
                   <span className="flex min-w-0 items-center gap-3">
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-pink/10 text-pink">
-                      <Icon name="refund" size={16} />
+                      <Icon name="users" size={16} />
                     </span>
                     <span className="min-w-0">
                       <span className="block text-[13px] font-medium text-cream">
-                        {openRefunds.length} refund request{openRefunds.length === 1 ? "" : "s"}
+                        {plural(data.newClientsThisMonth, "new client")}
                       </span>
                       <span className="block text-[11px] text-muted">
-                        {openRefunds.length === 0
-                          ? "Nothing pending"
-                          : `₦${openRefunds.reduce((total, refund) => total + refund.amount, 0).toLocaleString("en-NG")} requested`}
+                        Joined this month
                       </span>
                     </span>
                   </span>
-                  <Icon name="chevronRight" size={15} className="shrink-0 text-muted" />
+                  <Icon
+                    name="chevronRight"
+                    size={15}
+                    className="shrink-0 text-muted"
+                  />
                 </Link>
               </li>
             </ul>
           </Card>
 
           <Card className="p-5">
-            <SectionHead title="This month" hint={formatDate(today)} />
+            <SectionHead
+              title="This month"
+              hint={formatDate(data.today.date)}
+            />
             <dl className="grid grid-cols-2 gap-3 text-sm">
               <div className="rounded-2xl border border-hairline/60 bg-canvas/30 p-3">
-                <dt className="text-[11px] uppercase tracking-wide text-muted">Completed</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-muted">
+                  Completed
+                </dt>
                 <dd className="mt-1 font-display text-xl text-cream">
-                  {
-                    state.appointments.filter(
-                      (appointment) =>
-                        appointment.status === "completed" && appointment.date.startsWith(month)
-                    ).length
-                  }
+                  {data.thisMonth.completed}
                 </dd>
               </div>
               <div className="rounded-2xl border border-hairline/60 bg-canvas/30 p-3">
-                <dt className="text-[11px] uppercase tracking-wide text-muted">Cancelled</dt>
+                <dt className="text-[11px] uppercase tracking-wide text-muted">
+                  Cancelled
+                </dt>
                 <dd className="mt-1 font-display text-xl text-cream">
-                  {
-                    state.appointments.filter(
-                      (appointment) =>
-                        appointment.status === "cancelled" && appointment.date.startsWith(month)
-                    ).length
-                  }
+                  {data.thisMonth.cancelled}
                 </dd>
               </div>
             </dl>
@@ -362,7 +368,7 @@ export default function AdminOverviewPage() {
             }
           />
 
-          {upcoming.length === 0 ? (
+          {data.upcoming.length === 0 ? (
             <EmptyState
               icon="calendar"
               title="Nothing booked yet"
@@ -370,10 +376,10 @@ export default function AdminOverviewPage() {
             />
           ) : (
             <ul className="space-y-2.5">
-              {upcoming.map((appointment) => {
-                const client = clientById(state, appointment.clientId);
-                const service = serviceById(state, appointment.serviceId);
-                const artist = staffById(state, appointment.staffId);
+              {data.upcoming.map((appointment) => {
+                const isToday =
+                  instantDateKey(appointment.startAt, data.timezone) ===
+                  data.today.date;
 
                 return (
                   <li
@@ -382,25 +388,36 @@ export default function AdminOverviewPage() {
                   >
                     <div className="flex h-11 w-14 shrink-0 flex-col items-center justify-center rounded-xl bg-white/[0.04]">
                       <span className="text-[10px] uppercase text-muted">
-                        {appointment.date === today ? "Today" : formatDayShort(appointment.date)}
+                        {isToday
+                          ? "Today"
+                          : formatInstantDay(
+                              appointment.startAt,
+                              data.timezone
+                            )}
                       </span>
                       <span className="text-[13px] font-semibold text-cream">
-                        {formatTime(appointment.time)}
+                        {formatInstantTime(
+                          appointment.startAt,
+                          data.timezone
+                        )}
                       </span>
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="break-words text-sm font-medium text-cream">
-                        {client?.name ?? "Guest"}
+                        {appointment.clientName}
                       </p>
                       <p className="break-words text-xs text-muted">
-                        {service?.name} · {artist?.name ?? "Unassigned"}
+                        {appointment.serviceName} ·{" "}
+                        {appointment.staffName ?? "Unassigned"}
                       </p>
                     </div>
                     <div className="ml-auto flex shrink-0 items-center gap-2">
                       <span className="hidden text-sm text-cream sm:block">
                         <Money value={appointment.price} />
                       </span>
-                      <AppointmentBadge status={appointment.status} />
+                      <AppointmentBadge
+                        status={appointmentStatusFromApi[appointment.status]}
+                      />
                     </div>
                   </li>
                 );

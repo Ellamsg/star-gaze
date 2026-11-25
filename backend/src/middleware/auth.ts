@@ -18,7 +18,8 @@ export type Permission =
   | "clients:read"
   | "clients:write"
   | "team:write"
-  | "settings:write";
+  | "settings:write"
+  | "analytics:read";
 
 const ALL_PERMISSIONS: Permission[] = [
   "services:write",
@@ -30,6 +31,7 @@ const ALL_PERMISSIONS: Permission[] = [
   "clients:write",
   "team:write",
   "settings:write",
+  "analytics:read",
 ];
 
 /**
@@ -47,6 +49,7 @@ const ROLE_PERMISSIONS: Record<AdminRole, Permission[]> = {
     "appointments:write",
     "clients:read",
     "clients:write",
+    "analytics:read",
   ],
   TECH: ["appointments:read"],
 };

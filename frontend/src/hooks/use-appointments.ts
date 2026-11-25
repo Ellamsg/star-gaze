@@ -15,6 +15,7 @@ import {
   updateAppointmentStatus,
 } from "@/lib/api/appointments";
 import { availabilityKeys } from "@/hooks/use-availability";
+import { analyticsKeys } from "@/hooks/use-analytics";
 import { clientKeys } from "@/hooks/use-clients";
 import { STALE_TIME } from "@/lib/query-config";
 import type {
@@ -27,11 +28,12 @@ export const appointmentKeys = {
   list: () => [...appointmentKeys.all, "list"] as const,
 };
 
-/** A booking change affects the booking list, free slots and client history. */
+/** A booking change affects the booking list, free slots, client history and the dashboard totals. */
 function invalidateAppointmentViews(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
   void queryClient.invalidateQueries({ queryKey: availabilityKeys.all });
   void queryClient.invalidateQueries({ queryKey: clientKeys.all });
+  void queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
 }
 
 /** Admin list, straight from the database. */

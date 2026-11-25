@@ -1,3 +1,4 @@
+export type * from "./analytics";
 export type * from "./api";
 export type * from "./appointment";
 export type * from "./auth";

@@ -137,6 +137,42 @@ export function plural(count: number, singular: string, pluralForm?: string): st
   return count === 1 ? singular : (pluralForm ?? `${singular}s`);
 }
 
+/** "2026-11-25" for an ISO instant, as seen in a specific timezone. */
+export function instantDateKey(iso: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(iso));
+
+  const read = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+
+  return `${read("year")}-${read("month")}-${read("day")}`;
+}
+
+/** "25 Nov" for an ISO instant in a specific timezone. */
+export function formatInstantDay(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    day: "numeric",
+    month: "short",
+  }).format(new Date(iso));
+}
+
+/** "2:00 PM" for an ISO instant in a specific timezone. */
+export function formatInstantTime(iso: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  })
+    .format(new Date(iso))
+    .toUpperCase();
+}
+
 /** "morning" / "afternoon" / "evening" for the dashboard greeting. */
 export function greeting(): string {
   const hour = new Date().getHours();

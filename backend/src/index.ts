@@ -5,6 +5,7 @@ import cors from "cors";
 import helmet from "helmet";
 
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
+import { analyticsRouter } from "./routes/analytics.routes";
 import { appointmentRouter } from "./routes/appointment.routes";
 import { authRouter } from "./routes/auth.routes";
 import { availabilityRouter } from "./routes/availability.routes";
@@ -65,6 +66,7 @@ app.get("/api/hello", (_req: Request, res: Response) => {
 });
 
 app.use("/api/auth", authRouter);
+app.use("/api/analytics", analyticsRouter);
 app.use("/api/services", serviceRouter);
 app.use("/api/categories", categoryRouter);
 app.use("/api/availability", availabilityRouter);
