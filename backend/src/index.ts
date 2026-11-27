@@ -12,6 +12,7 @@ import { availabilityRouter } from "./routes/availability.routes";
 import { categoryRouter } from "./routes/category.routes";
 import { clientRouter } from "./routes/client.routes";
 import { serviceRouter } from "./routes/service.routes";
+import { uploadRouter } from "./routes/upload.routes";
 
 const app = express();
 // 5000 is taken by macOS AirPlay Receiver on many Macs, so the default is 4000.
@@ -72,7 +73,7 @@ app.use("/api/categories", categoryRouter);
 app.use("/api/availability", availabilityRouter);
 app.use("/api/appointments", appointmentRouter);
 app.use("/api/clients", clientRouter);
-
+app.use("/api/uploads", uploadRouter); // ← add this
 /* ------------------------------ error handling ----------------------------- */
 
 app.use(notFoundHandler);

@@ -80,13 +80,15 @@ export function zonedStartOfDay(
   timeZone = STUDIO_TIMEZONE
 ): Date {
   const [year, month, day] = dateKey.split("-").map(Number);
-  let guess = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  const target = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  let guess = new Date(target);
 
-  // Two passes are enough for normal zones (including DST changes); the third
-  // is a cheap safety net.
+  // Shift the guess by how far its wall clock is from 00:00 on the target day.
+  // Comparing against the target (not against the guess itself) is what stops
+  // the loop from subtracting the zone offset again on every pass.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const parts = zonedParts(guess, timeZone);
-    const asUtc = Date.UTC(
+    const wallClock = Date.UTC(
       parts.year,
       parts.month - 1,
       parts.day,
@@ -94,7 +96,7 @@ export function zonedStartOfDay(
       parts.minute,
       parts.second
     );
-    const drift = asUtc - guess.getTime();
+    const drift = wallClock - target;
     if (drift === 0) break;
     guess = new Date(guess.getTime() - drift);
   }

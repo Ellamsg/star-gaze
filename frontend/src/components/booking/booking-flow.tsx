@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
-
+import { MAX_PHOTOS, thumbUrl, uploadPhoto, type UploadedPhoto } from "@/lib/upload-photo";
 import { Spinner } from "@/components/spinner";
 import { formatNaira, studio } from "@/data/site";
 import { useCreateAppointment } from "@/hooks/use-appointments";
@@ -11,11 +11,12 @@ import { useOpenSlots } from "@/hooks/use-availability";
 import { useCategories } from "@/hooks/use-categories";
 import { useServices } from "@/hooks/use-services";
 import { formatDuration } from "@/lib/date";
-import type { GuestFormValues } from "@/types/appointment";
+import type { BookedService, GuestFormValues } from "@/types/appointment";
 import type { BookingStep, DayOption } from "@/types/booking";
 import type { ServiceDTO } from "@/types/service";
 
 import { BookingConfirmation } from "./booking-confirmation";
+import { PriceBreakdown } from "./price-breakdown";
 import { StepProgress } from "./step-progress";
 import { backButton, inputBase, nextButton } from "./ui";
 
@@ -38,13 +39,23 @@ export function BookingFlow() {
 
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
-  const [photoName, setPhotoName] = useState<string | null>(null);
-
+  // const [photoName, setPhotoName] = useState<string | null>(null);
+const [photos, setPhotos] = useState<UploadedPhoto[]>([]);
+const [uploadingPhoto, setUploadingPhoto] = useState(false);
+const [photoError, setPhotoError] = useState<string | null>(null);
   const [dayId, setDayId] = useState<string | null>(null);
   const [time, setTime] = useState<string | null>(null);
 
   const [remembered, setRemembered] = useState(false);
   const [reference, setReference] = useState<string | null>(null);
+
+  const [booked, setBooked] = useState<{
+    services: BookedService[];
+    total: number;
+    day: DayOption;
+    time: string;
+    createdAt: string;
+  } | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   /* ---- data from TanStack Query ---- */
@@ -179,7 +190,7 @@ export function BookingFlow() {
 
   const canProceed =
     step === 0
-      ? !servicesLoading && selectedIds.length > 0
+  ? !servicesLoading && selectedIds.length > 0 && !uploadingPhoto
       : step === 1
         ? Boolean(chosenSlot)
         : !createBooking.isPending;
@@ -243,6 +254,15 @@ export function BookingFlow() {
       return;
     }
 
+    // Capture the chosen day now: once the booking lands, the slot is no longer
+    // "open", so it drops out of the day list and would fall back to today.
+    const bookedDay =
+      days.find((item) => item.id === chosenSlot.date) ?? day;
+    if (!bookedDay) {
+      setSubmitError("Pick a day and time again — that slot is no longer available.");
+      return;
+    }
+
     setSubmitError(null);
 
     try {
@@ -252,10 +272,18 @@ export function BookingFlow() {
         name: values.name.trim(),
         phone: values.phone.trim(),
         note: values.note.trim() || undefined,
+          photoIds: photos.map((photo) => photo.publicId),
       });
 
       persistGuest(values.name, values.phone);
       setRemembered(true);
+      setBooked({
+        services: appointment.services,
+        total: appointment.price,
+        day: bookedDay,
+        time: chosenSlot.time,
+        createdAt: appointment.createdAt,
+      });
       setReference(appointment.reference);
     } catch (error) {
       setSubmitError(
@@ -284,10 +312,34 @@ export function BookingFlow() {
     void submitBooking();
   }
 
-  function handlePhoto(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) setPhotoName(file.name);
+ async function handlePhoto(event: ChangeEvent<HTMLInputElement>) {
+  const files = Array.from(event.target.files ?? []);
+  event.target.value = ""; // lets the same file be picked again
+  if (files.length === 0) return;
+
+  const room = MAX_PHOTOS - photos.length;
+  if (room <= 0) {
+    setPhotoError(`You can add up to ${MAX_PHOTOS} photos.`);
+    return;
   }
+
+  setPhotoError(null);
+  setUploadingPhoto(true);
+  try {
+    for (const file of files.slice(0, room)) {
+      const uploaded = await uploadPhoto(file);
+      setPhotos((current) => [...current, uploaded]);
+    }
+  } catch (error) {
+    setPhotoError(error instanceof Error ? error.message : "Upload failed.");
+  } finally {
+    setUploadingPhoto(false);
+  }
+}
+
+function removePhoto(publicId: string) {
+  setPhotos((current) => current.filter((p) => p.publicId !== publicId));
+}
 
   function forgetGuest() {
     try {
@@ -302,26 +354,33 @@ export function BookingFlow() {
   function resetFlow() {
     setStep(0);
     setSelectedIds([]);
-    setPhotoName(null);
+setPhotos([]);
+setPhotoError(null);
     setDayId(null);
     setTime(null);
     setReference(null);
+    setBooked(null);
     setSubmitError(null);
     reset({ name: "", phone: "", note: "" });
   }
 
-  if (reference && chosen.length > 0 && day && time) {
+  if (reference && booked) {
     return (
       <BookingConfirmation
         reference={reference}
-        services={chosen}
-        day={day}
-        time={time}
+        services={booked.services}
+        day={booked.day}
+        time={booked.time}
+        createdAt={booked.createdAt}
         name={getValues("name")}
         phone={getValues("phone")}
         note={getValues("note")}
-        photoName={photoName}
-        total={total}
+      photoName={
+  photos.length > 0
+    ? `${photos.length} ${photos.length === 1 ? "photo" : "photos"} attached`
+    : null
+}
+        total={booked.total}
         onBookAnother={resetFlow}
       />
     );
@@ -441,7 +500,7 @@ export function BookingFlow() {
             </>
           )}
 
-          <div className="mt-8">
+          {/* <div className="mt-8">
             <h3 className="font-display text-[clamp(1.4rem,4vw,1.8rem)] uppercase leading-none text-cream">
               Got a design in mind?
             </h3>
@@ -468,7 +527,69 @@ export function BookingFlow() {
                   : "Screenshots from Pinterest or Instagram work great"}
               </span>
             </label>
-          </div>
+          </div> */}
+          <div className="mt-8">
+  <h3 className="font-display text-[clamp(1.4rem,4vw,1.8rem)] uppercase leading-none text-cream">
+    Got a design in mind?
+  </h3>
+  <p className="mt-2 text-[14px] text-muted">
+    Add up to {MAX_PHOTOS} photos and we&rsquo;ll match them. Optional.
+  </p>
+
+  {photos.length > 0 ? (
+    <ul className="mt-4 flex flex-wrap gap-3">
+      {photos.map((photo) => (
+        <li key={photo.publicId} className="relative">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={thumbUrl(photo.url)}
+            alt={photo.name}
+            className="h-24 w-24 rounded-2xl border border-white/10 object-cover"
+          />
+          <button
+            type="button"
+            onClick={() => removePhoto(photo.publicId)}
+            aria-label={`Remove ${photo.name}`}
+            className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-canvas text-[13px] text-cream ring-1 ring-white/20 hover:text-pink"
+          >
+            ×
+          </button>
+        </li>
+      ))}
+    </ul>
+  ) : null}
+
+  {photos.length < MAX_PHOTOS ? (
+
+    <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-pink/45 bg-surface/60 px-6 py-8 text-center transition-colors hover:border-pink/80">
+      <input
+        type="file"
+        accept="image/*"
+        multiple
+        className="sr-only"
+        onChange={handlePhoto}
+        disabled={uploadingPhoto}
+      />
+      {uploadingPhoto ? (
+        <span className="flex items-center gap-2 text-[14px] font-semibold text-cream">
+          <Spinner size={15} /> Uploading…
+        </span>
+      ) : (
+        <>
+          <span aria-hidden="true" className="text-[26px] leading-none text-pink">+</span>
+          <span className="mt-3 text-[14px] font-semibold text-cream">Upload a photo</span>
+          <span className="mt-1 text-[12.5px] leading-relaxed text-muted">
+            Screenshots from Pinterest or Instagram work great
+          </span>
+        </>
+      )}
+    </label>
+  ) : null}
+
+  {photoError ? (
+    <p role="alert" className="mt-3 text-[13px] text-pink">{photoError}</p>
+  ) : null}
+</div>
         </div>
       ) : null}
 
@@ -480,8 +601,15 @@ export function BookingFlow() {
           </h2>
           <p className="mt-2 text-[14px] leading-relaxed text-muted">
             {chosen.length} {chosen.length === 1 ? "service" : "services"} ·{" "}
-            {formatDuration(totalMinutes)} · {formatNaira(total)}
+            {formatDuration(totalMinutes)} in the chair
           </p>
+
+          <PriceBreakdown
+            className="mt-4"
+            services={chosen}
+            total={total}
+            label="Total"
+          />
 
           <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
             Day
@@ -613,6 +741,13 @@ export function BookingFlow() {
               </button>
             </div>
           ) : null}
+
+          <PriceBreakdown
+            className="mt-5"
+            services={chosen}
+            total={total}
+            label="Total due in studio"
+          />
 
           <div className="mt-6 flex flex-col gap-5">
             <label className="flex flex-col gap-2">

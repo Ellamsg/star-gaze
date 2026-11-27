@@ -51,6 +51,14 @@ export const appointmentStatusFromApi: Record<
 };
 
 /** Shape returned by POST /api/appointments */
+/** One service line on a booking, with the price frozen at booking time. */
+export type BookedService = {
+  id: string;
+  name: string;
+  price: number;
+  durationMin: number;
+};
+
 export type AppointmentDTO = {
   id: string;
   reference: string;
@@ -58,8 +66,11 @@ export type AppointmentDTO = {
   status: string;
   startAt: string;
   endAt: string;
+  /** When the booking was made. Distinct from `startAt` (the chair time). */
+  createdAt: string;
   price: number;
-  services: Array<{ id: string; name: string }>;
+  /** Per-service lines taken from the saved appointment items. */
+  services: BookedService[];
 };
 
 /** Body sent to POST /api/appointments */
@@ -70,6 +81,7 @@ export type CreateAppointmentPayload = {
   phone: string;
   email?: string;
   note?: string;
+  photoIds?: string[];
 };
 
 /** React Hook Form values — guest details step */
@@ -116,6 +128,9 @@ export type UpdateAppointmentStatusPayload = {
 export type AppointmentAdminRow = AdminAppointmentDTO & {
   date: string;
   time: string;
+  /** When the booking was made, split for display. */
+  bookedDate: string;
+  bookedTime: string;
   statusUi: AppointmentStatus;
   clientName: string;
   serviceNames: string;

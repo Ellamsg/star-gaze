@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
-
+import { verifyPhotos } from "../lib/cloudinary";
 import { prisma } from "../lib/prisma";
 import { HttpError } from "../lib/http-error";
 import type {
@@ -189,6 +189,15 @@ export async function createAppointment(
     );
   }
 
+  /* 2b — verify any uploaded photos with Cloudinary */
+let photos: { publicId: string; url: string }[] = [];
+if (input.photoIds?.length) {
+  try {
+    photos = await verifyPhotos(input.photoIds);
+  } catch {
+    throw new HttpError(400, "One of your photos could not be verified. Please upload it again.");
+  }
+}
   /* 3 — find or create the client */
   const phone = normalizePhone(input.phone);
   const email = input.email?.toLowerCase() ?? null;
@@ -246,8 +255,14 @@ export async function createAppointment(
             durationMin: service.durationMin,
           })),
         },
+        photos: {
+        create: photos.map((photo) => ({
+        url: photo.url,
+        publicId: photo.publicId,
+      })),
+    },
       },
-      include: { items: { include: { service: true } } },
+      include: { items: { include: { service: true } },photos: true },
     });
   });
 
@@ -259,10 +274,15 @@ export async function createAppointment(
       status: appointment.status,
       startAt: appointment.startAt.toISOString(),
       endAt: appointment.endAt.toISOString(),
+      createdAt: appointment.createdAt.toISOString(),
       price: Number(appointment.price),
+      // Prices come from the saved items, not the live service table, so the
+      // confirmation shows exactly what this booking was charged.
       services: appointment.items.map((item) => ({
         id: item.service.id,
         name: item.service.name,
+        price: Number(item.price),
+        durationMin: item.durationMin,
       })),
     },
   });

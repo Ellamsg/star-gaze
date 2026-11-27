@@ -9,13 +9,14 @@ import {
   dayLabel,
   monthLabel,
   zonedDateKey,
+  zonedParts,
   zonedStartOfDay,
 } from "../lib/timezone";
 import type { OverviewQuery } from "../validators/analytics.schema";
 
 /**
  * The studio has no payments table yet, so "money taken" is derived from the
- * appointment status: a booked slot is revenue once the owner confirms it.
+ * appointment status: a booking is revenue once the owner confirms it.
  */
 const PAID_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.CONFIRMED,
@@ -29,138 +30,162 @@ type Bucket = {
   value: number;
 };
 
-type SeriesRow = { startAt: Date; price: unknown };
+type Granularity = "hour" | "day" | "month";
+
+type SeriesRow = {
+  createdAt: Date;
+  startAt: Date;
+  price: unknown;
+};
+
+const RANGE_LABELS: Record<OverviewQuery["range"], string> = {
+  today: "Today",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  month: "This month",
+  "12m": "Last 12 months",
+};
+
+const CHART_CAPTIONS: Record<OverviewQuery["range"], string> = {
+  today: "Today by hour",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  month: "This month by day",
+  "12m": "Last 12 months",
+};
+
+const pad2 = (value: number): string => String(value).padStart(2, "0");
+
+/** The UTC instant range the summary covers, ending at midnight tonight. */
+function resolveWindow(
+  range: OverviewQuery["range"],
+  todayKey: string
+): { startKey: string; start: Date; end: Date } {
+  const monthStartKey = `${todayKey.slice(0, 7)}-01`;
+
+  const startKey =
+    range === "today"
+      ? todayKey
+      : range === "7d"
+        ? addDaysToKey(todayKey, -6)
+        : range === "30d"
+          ? addDaysToKey(todayKey, -29)
+          : range === "month"
+            ? monthStartKey
+            : addMonthsToKey(monthStartKey, -11);
+
+  return {
+    startKey,
+    start: zonedStartOfDay(startKey),
+    end: zonedStartOfDay(addDaysToKey(todayKey, 1)),
+  };
+}
 
 function buildSeries(
   range: OverviewQuery["range"],
+  basis: OverviewQuery["basis"],
   todayKey: string,
   rows: SeriesRow[]
-): Bucket[] {
+): { series: Bucket[]; granularity: Granularity } {
+  const dateOf = (row: SeriesRow) =>
+    basis === "booked" ? row.createdAt : row.startAt;
+
+  if (range === "today") {
+    const hours: Bucket[] = Array.from({ length: 24 }, (_, hour) => ({
+      key: `${todayKey}T${pad2(hour)}`,
+      label: `${pad2(hour)}:00`,
+      shortLabel: pad2(hour),
+      value: 0,
+    }));
+
+    for (const row of rows) {
+      const { hour } = zonedParts(dateOf(row));
+      hours[hour].value += Number(row.price);
+    }
+
+    return { series: hours, granularity: "hour" };
+  }
+
   if (range === "12m") {
-    const firstMonth = addMonthsToKey(`${todayKey.slice(0, 7)}-01`, -11);
-    const buckets: Bucket[] = [];
+    const firstMonth = addMonthsToKey(
+      `${todayKey.slice(0, 7)}-01`,
+      -11
+    );
+    const months: Bucket[] = [];
     const byMonth = new Map<string, Bucket>();
 
     for (let index = 0; index < 12; index += 1) {
       const monthKey = addMonthsToKey(firstMonth, index).slice(0, 7);
       const label = monthLabel(monthKey);
-      const bucket: Bucket = {
-        key: monthKey,
-        label,
-        shortLabel: label,
-        value: 0,
-      };
-      buckets.push(bucket);
+      const bucket: Bucket = { key: monthKey, label, shortLabel: label, value: 0 };
+      months.push(bucket);
       byMonth.set(monthKey, bucket);
     }
 
     for (const row of rows) {
-      const bucket = byMonth.get(zonedDateKey(row.startAt).slice(0, 7));
+      const bucket = byMonth.get(zonedDateKey(dateOf(row)).slice(0, 7));
       if (bucket) bucket.value += Number(row.price);
     }
 
-    return buckets;
+    return { series: months, granularity: "month" };
   }
 
-  const days = range === "7d" ? 7 : 42;
+  // Day buckets: 7d/30d are rolling, "month" runs from the 1st to today.
+  const dayCount =
+    range === "7d"
+      ? 7
+      : range === "30d"
+        ? 30
+        : Number(todayKey.slice(8, 10));
+
   const keys: string[] = [];
-  for (let offset = days - 1; offset >= 0; offset -= 1) {
+  for (let offset = dayCount - 1; offset >= 0; offset -= 1) {
     keys.push(addDaysToKey(todayKey, -offset));
   }
 
   const byDay = new Map<string, number>();
   for (const row of rows) {
-    const key = zonedDateKey(row.startAt);
+    const key = zonedDateKey(dateOf(row));
     byDay.set(key, (byDay.get(key) ?? 0) + Number(row.price));
   }
 
-  if (range === "7d") {
-    return keys.map((key) => ({
+  return {
+    series: keys.map((key) => ({
       key,
       label: dayLabel(key),
       shortLabel: key.slice(8),
       value: byDay.get(key) ?? 0,
-    }));
-  }
-
-  // Fold 42 daily totals into 6 weekly buckets, oldest first.
-  const weeks: Bucket[] = [];
-  for (let index = 0; index < keys.length; index += 7) {
-    const weekKeys = keys.slice(index, index + 7);
-    const value = weekKeys.reduce(
-      (total, key) => total + (byDay.get(key) ?? 0),
-      0
-    );
-    const first = weekKeys[0];
-    const label = dayLabel(first);
-    weeks.push({ key: first, label, shortLabel: label, value });
-  }
-
-  return weeks;
+    })),
+    granularity: "day",
+  };
 }
 
 /* ------------------- GET /api/analytics/overview (admin) ------------------- */
 
 export async function overview(req: Request, res: Response): Promise<void> {
-  const { range } = req.query as unknown as OverviewQuery;
+  const { range, basis } = req.query as unknown as OverviewQuery;
 
   const now = new Date();
   const todayKey = zonedDateKey(now);
-  const todayStart = zonedStartOfDay(todayKey);
-  const tomorrowStart = zonedStartOfDay(addDaysToKey(todayKey, 1));
+  const { start, end } = resolveWindow(range, todayKey);
 
-  const currentMonthKey = `${todayKey.slice(0, 7)}-01`;
-  const monthStart = zonedStartOfDay(currentMonthKey);
-  const monthEnd = zonedStartOfDay(addMonthsToKey(currentMonthKey, 1));
+  // One branch per basis so Prisma keeps its typed `where`.
+  const where =
+    basis === "booked"
+      ? { createdAt: { gte: start, lt: end } }
+      : { startAt: { gte: start, lt: end } };
 
-  const rangeStartKey =
-    range === "12m"
-      ? addMonthsToKey(currentMonthKey, -11)
-      : addDaysToKey(todayKey, range === "7d" ? -6 : -41);
-  const rangeStart = zonedStartOfDay(rangeStartKey);
-  // Every range means "up to and including today", so a booking dated later in
-  // the month must not inflate the 12-month total while the week view omits it.
-  const rangeEnd = tomorrowStart;
-
-  const [
-    todayRows,
-    awaiting,
-    newClientsThisMonth,
-    completedThisMonth,
-    cancelledThisMonth,
-    seriesRows,
-    upcoming,
-  ] = await Promise.all([
-    prisma.appointment.findMany({
-      where: { startAt: { gte: todayStart, lt: tomorrowStart } },
-      select: { status: true, price: true },
-    }),
-    prisma.appointment.aggregate({
-      where: { status: AppointmentStatus.PENDING },
-      _sum: { price: true },
+  const [grouped, newClients, seriesRows, upcoming] = await Promise.all([
+    prisma.appointment.groupBy({
+      by: ["status"],
+      where,
       _count: { _all: true },
+      _sum: { price: true },
     }),
-    prisma.client.count({
-      where: { createdAt: { gte: monthStart, lt: monthEnd } },
-    }),
-    prisma.appointment.count({
-      where: {
-        status: AppointmentStatus.COMPLETED,
-        startAt: { gte: monthStart, lt: monthEnd },
-      },
-    }),
-    prisma.appointment.count({
-      where: {
-        status: AppointmentStatus.CANCELLED,
-        startAt: { gte: monthStart, lt: monthEnd },
-      },
-    }),
+    prisma.client.count({ where: { createdAt: { gte: start, lt: end } } }),
     prisma.appointment.findMany({
-      where: {
-        status: { in: PAID_STATUSES },
-        startAt: { gte: rangeStart, lt: rangeEnd },
-      },
-      select: { startAt: true, price: true, status: true },
+      where: { AND: [where, { status: { in: PAID_STATUSES } }] },
+      select: { createdAt: true, startAt: true, price: true },
     }),
     prisma.appointment.findMany({
       where: {
@@ -179,63 +204,59 @@ export async function overview(req: Request, res: Response): Promise<void> {
     }),
   ]);
 
-  const paidToday = todayRows.filter((row) =>
-    PAID_STATUSES.includes(row.status)
-  );
-  const revenueToday = paidToday.reduce(
-    (total, row) => total + Number(row.price),
-    0
-  );
-  const bookingsToday = todayRows.filter(
-    (row) => row.status !== AppointmentStatus.CANCELLED
-  ).length;
+  const byStatus = new Map(grouped.map((group) => [group.status, group]));
+  const countOf = (status: AppointmentStatus): number =>
+    byStatus.get(status)?._count._all ?? 0;
+  const sumOf = (status: AppointmentStatus): number =>
+    Number(byStatus.get(status)?._sum.price ?? 0);
 
-  const revenueSeries = buildSeries(range, todayKey, seriesRows);
-  const revenue = revenueSeries.reduce(
-    (total, bucket) => total + bucket.value,
-    0
-  );
-  const bestBucket = revenueSeries.reduce(
+  const { series, granularity } = buildSeries(range, basis, todayKey, seriesRows);
+  const bestBucket = series.reduce(
     (best, bucket) => (bucket.value > best.value ? bucket : best),
-    revenueSeries[0] ?? { key: "", label: "—", shortLabel: "—", value: 0 }
+    series[0] ?? { key: "", label: "—", shortLabel: "—", value: 0 }
   );
 
   res.setHeader("Cache-Control", "private, no-store");
   res.json({
     data: {
       range,
+      basis,
       timezone: STUDIO_TIMEZONE,
       generatedAt: now.toISOString(),
-      today: {
-        date: todayKey,
-        bookings: bookingsToday,
-        revenue: revenueToday,
-        paidBookings: paidToday.length,
+      window: {
+        start: start.toISOString(),
+        end: end.toISOString(),
+        label: RANGE_LABELS[range],
       },
-      awaiting: {
-        count: awaiting._count._all,
-        amount: Number(awaiting._sum.price ?? 0),
+      totals: {
+        // Every booking made/scheduled in the window, whatever its status.
+        bookings: grouped
+          .filter((group) => group.status !== AppointmentStatus.CANCELLED)
+          .reduce((total, group) => total + group._count._all, 0),
+        paid: PAID_STATUSES.reduce((total, status) => total + sumOf(status), 0),
+        paidBookings: PAID_STATUSES.reduce(
+          (total, status) => total + countOf(status),
+          0
+        ),
+        pending: {
+          count: countOf(AppointmentStatus.PENDING),
+          amount: sumOf(AppointmentStatus.PENDING),
+        },
+        completed: countOf(AppointmentStatus.COMPLETED),
+        cancelled: countOf(AppointmentStatus.CANCELLED),
+        noShow: countOf(AppointmentStatus.NO_SHOW),
       },
-      newClientsThisMonth,
-      rangeTotals: {
-        revenue,
-        paidBookings: seriesRows.length,
-        completed: seriesRows.filter(
-          (row) => row.status === AppointmentStatus.COMPLETED
-        ).length,
-        confirmed: seriesRows.filter(
-          (row) => row.status === AppointmentStatus.CONFIRMED
-        ).length,
-      },
-      revenueSeries,
+      newClients,
+      series,
       bestBucket,
-      thisMonth: {
-        completed: completedThisMonth,
-        cancelled: cancelledThisMonth,
+      chart: {
+        granularity,
+        caption: CHART_CAPTIONS[range],
       },
       upcoming: upcoming.map((appointment) => ({
         id: appointment.id,
         startAt: appointment.startAt.toISOString(),
+        createdAt: appointment.createdAt.toISOString(),
         status: appointment.status,
         price: Number(appointment.price),
         clientName: [appointment.client.firstName, appointment.client.lastName]

@@ -1,5 +1,13 @@
 /** Date helpers shared by the admin dashboard. */
 
+/**
+ * The studio's timezone. Appointment times come from the API already formatted
+ * in this zone, so timestamps like `createdAt` are formatted here too — not in
+ * the visitor's browser zone.
+ */
+export const STUDIO_TIMEZONE =
+  process.env.NEXT_PUBLIC_STUDIO_TIMEZONE?.trim() || "Africa/Lagos";
+
 /** "2026-10-28" built from local time (never UTC, so the day never shifts). */
 export function toDateKey(date: Date): string {
   const year = date.getFullYear();

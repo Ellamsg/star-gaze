@@ -1,16 +1,24 @@
 import Link from "next/link";
 
-import { formatNaira, studio } from "@/data/site";
+import { studio } from "@/data/site";
+import {
+  formatInstantDay,
+  formatInstantTime,
+  STUDIO_TIMEZONE,
+} from "@/lib/date";
 import type { DayOption } from "@/types/booking";
-import type { ServiceDTO } from "@/types/service";
+import type { BookedService } from "@/types/appointment";
 
+import { PriceBreakdown } from "./price-breakdown";
 import { pillGhost, pillPink } from "./ui";
 
 type BookingConfirmationProps = {
   reference: string;
-  services: ServiceDTO[];
+  services: BookedService[];
   day: DayOption;
   time: string;
+  /** When the booking was made, as an ISO instant. */
+  createdAt: string;
   name: string;
   phone: string;
   note: string;
@@ -48,6 +56,7 @@ export function BookingConfirmation({
   services,
   day,
   time,
+  createdAt,
   name,
   phone,
   note,
@@ -77,25 +86,29 @@ export function BookingConfirmation({
         </p>
       </div>
 
-      <dl className="mt-7">
+      <div className="mt-7">
+        <PriceBreakdown
+          services={services}
+          total={total}
+          label="Total due in studio"
+        />
+      </div>
+
+      <dl className="mt-5">
         <DetailRow
-          label="Services"
-          value={services.map((item) => item.name).join(" + ")}
-          sub={formatNaira(total)}
+          label="Appointment"
+          value={`${day.weekday} ${day.day} ${day.month} · ${time}`}
         />
         <DetailRow
-          label="When"
-          value={`${day.weekday} ${day.day} ${day.month} · ${time}`}
+          label="Booked on"
+          value={`${formatInstantDay(createdAt, STUDIO_TIMEZONE)} · ${formatInstantTime(
+            createdAt,
+            STUDIO_TIMEZONE
+          )}`}
         />
         <DetailRow label="Guest" value={name.trim()} sub={phone.trim()} />
         {photoName ? <DetailRow label="Inspo photo" value={photoName} /> : null}
         {note.trim() ? <DetailRow label="Note" value={note.trim()} /> : null}
-        <div className="flex items-baseline justify-between pt-4">
-          <dt className="text-[13px] text-muted">Total due in studio</dt>
-          <dd className="text-[16px] font-semibold tabular-nums text-cream">
-            {formatNaira(total)}
-          </dd>
-        </div>
       </dl>
 
       <div className="mt-7 rounded-2xl border border-white/8 bg-surface px-5 py-4 text-[13.5px] leading-relaxed text-muted">

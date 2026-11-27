@@ -1,15 +1,21 @@
 import type { AppointmentApiStatus } from "./appointment";
 
-/** The ranges the overview chart can show. */
-export const analyticsRanges = ["7d", "6w", "12m"] as const;
+/** How far back the summary looks, always ending today. */
+export const analyticsRanges = ["today", "7d", "30d", "month", "12m"] as const;
 export type AnalyticsRange = (typeof analyticsRanges)[number];
 
+export const analyticsBases = ["booked", "scheduled"] as const;
+/**
+ * "booked" = when the booking was made (createdAt).
+ * "scheduled" = when the appointment happens (startAt).
+ */
+export type AnalyticsBasis = (typeof analyticsBases)[number];
+
 export type AnalyticsBucket = {
-  /** "2026-11-25" for days, "2026-11" for months, a week's first day for weeks. */
   key: string;
-  /** "25 Nov" or "Nov". */
+  /** "08:00", "25 Nov" or "Nov". */
   label: string;
-  /** "25" for the compact 7-day axis. */
+  /** "08" or "25" for a compact axis. */
   shortLabel: string;
   value: number;
 };
@@ -17,6 +23,7 @@ export type AnalyticsBucket = {
 export type UpcomingAppointmentDTO = {
   id: string;
   startAt: string;
+  createdAt: string;
   status: AppointmentApiStatus;
   price: number;
   clientName: string;
@@ -27,24 +34,24 @@ export type UpcomingAppointmentDTO = {
 /** Response of GET /api/analytics/overview — all totals are computed server-side. */
 export type OverviewAnalyticsDTO = {
   range: AnalyticsRange;
+  basis: AnalyticsBasis;
   timezone: string;
   generatedAt: string;
-  today: {
-    date: string;
+  window: { start: string; end: string; label: string };
+  totals: {
+    /** Non-cancelled bookings in the window. */
     bookings: number;
-    revenue: number;
+    /** Money from confirmed + completed bookings. */
+    paid: number;
     paidBookings: number;
-  };
-  awaiting: { count: number; amount: number };
-  newClientsThisMonth: number;
-  rangeTotals: {
-    revenue: number;
-    paidBookings: number;
+    pending: { count: number; amount: number };
     completed: number;
-    confirmed: number;
+    cancelled: number;
+    noShow: number;
   };
-  revenueSeries: AnalyticsBucket[];
+  newClients: number;
+  series: AnalyticsBucket[];
   bestBucket: AnalyticsBucket;
-  thisMonth: { completed: number; cancelled: number };
+  chart: { granularity: "hour" | "day" | "month"; caption: string };
   upcoming: UpcomingAppointmentDTO[];
 };

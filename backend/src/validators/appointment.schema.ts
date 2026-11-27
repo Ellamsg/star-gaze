@@ -14,6 +14,7 @@ export const createAppointmentSchema = z.object({
   phone: z.string().trim().min(7, "Phone is too short").max(20),
   email: z.string().trim().toLowerCase().email().max(320).optional(),
   note: z.string().trim().max(1000).optional(),
+  photoIds: z.array(z.string().min(1).max(200)).max(3).optional(),
   marketingOptIn: z.boolean().optional(),
 });
 

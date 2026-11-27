@@ -54,6 +54,7 @@ function pad(value: number): string {
 /** Turn the API row into the values the dashboard renders. */
 function toRow(appointment: AdminAppointmentDTO): AppointmentAdminRow {
   const start = new Date(appointment.startAt);
+  const booked = new Date(appointment.createdAt);
   const clientName =
     [appointment.client.firstName, appointment.client.lastName]
       .filter((part): part is string => Boolean(part))
@@ -63,6 +64,8 @@ function toRow(appointment: AdminAppointmentDTO): AppointmentAdminRow {
     ...appointment,
     date: toDateKey(start),
     time: `${pad(start.getHours())}:${pad(start.getMinutes())}`,
+    bookedDate: toDateKey(booked),
+    bookedTime: `${pad(booked.getHours())}:${pad(booked.getMinutes())}`,
     statusUi: appointmentStatusFromApi[appointment.status],
     clientName,
     serviceNames:
@@ -333,10 +336,25 @@ export default function AppointmentsPage() {
                               <p className="break-words text-[15px] font-semibold leading-snug text-cream">
                                 {appointment.clientName}
                               </p>
-                              <p className="break-words text-[12px] leading-relaxed text-muted">
-                                {appointment.serviceNames} ·{" "}
-                                {formatDuration(appointment.totalDurationMin)}
-                              </p>
+                              <ul className="mt-1 space-y-0.5">
+                                {appointment.items.map((item) => (
+                                  <li
+                                    key={item.id}
+                                    className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-[12px] leading-relaxed"
+                                  >
+                                    <span className="min-w-0 break-words text-muted">
+                                      {item.service.name}
+                                    </span>
+                                    {/* One service? The total on the right is
+                                        the same number, so don't repeat it. */}
+                                    {appointment.items.length > 1 ? (
+                                      <span className="shrink-0 text-muted/90">
+                                        <Money value={item.price} />
+                                      </span>
+                                    ) : null}
+                                  </li>
+                                ))}
+                              </ul>
                             </div>
                             <span className="shrink-0 text-[13px] font-medium text-cream">
                               <Money value={appointment.price} />
@@ -351,7 +369,11 @@ export default function AppointmentsPage() {
                               </Badge>
                             ) : null}
                             <span className="text-[11px] text-muted/80">
+                              {formatDuration(appointment.totalDurationMin)} ·{" "}
                               {appointment.staff?.name ?? "Unassigned"}
+                            </span>
+                            <span className="text-[11px] text-muted/70">
+                              Booked {formatDayShort(appointment.bookedDate)}
                             </span>
                           </div>
                         </div>
@@ -488,19 +510,41 @@ function AppointmentDetail({
         </div>
       )}
 
+      <div className="rounded-[22px] border border-hairline/60 bg-canvas/30 px-4 py-3.5">
+        <p className="text-[11px] uppercase tracking-[0.16em] text-muted">
+          Services &amp; prices
+        </p>
+        <ul className="mt-3 space-y-2">
+          {appointment.items.map((item) => (
+            <li
+              key={item.id}
+              className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5"
+            >
+              <span className="min-w-0 text-[13px] leading-snug text-cream">
+                {item.service.name}
+                <span className="ml-2 whitespace-nowrap text-[11px] text-muted">
+                  {formatDuration(item.durationMin)}
+                </span>
+              </span>
+              <span className="shrink-0 text-[13px] text-cream">
+                <Money value={item.price} />
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-3 flex items-baseline justify-between border-t border-hairline/50 pt-3">
+          <span className="text-[11px] uppercase tracking-[0.14em] text-muted">
+            Total
+          </span>
+          <span className="font-display text-[18px] text-cream">
+            <Money value={appointment.price} />
+          </span>
+        </div>
+      </div>
+
       <div className="grid gap-2.5 sm:grid-cols-2">
         <DetailRow label="Status">
           <AppointmentBadge status={appointment.statusUi} />
-        </DetailRow>
-        <DetailRow label="Price">
-          <span className="text-[13px] text-cream">
-            <Money value={appointment.price} />
-          </span>
-        </DetailRow>
-        <DetailRow label="Service">
-          <span className="break-words text-[13px] text-cream">
-            {appointment.serviceNames}
-          </span>
         </DetailRow>
         <DetailRow label="Duration">
           <span className="text-[13px] text-cream">
@@ -512,9 +556,15 @@ function AppointmentDetail({
             {appointment.staff?.name ?? "Unassigned"}
           </span>
         </DetailRow>
-        <DetailRow label="When">
+        <DetailRow label="Appointment">
           <span className="text-[13px] text-cream">
             {formatDate(appointment.date)} · {formatTime(appointment.time)}
+          </span>
+        </DetailRow>
+        <DetailRow label="Booked on">
+          <span className="text-[13px] text-cream">
+            {formatDate(appointment.bookedDate)} ·{" "}
+            {formatTime(appointment.bookedTime)}
           </span>
         </DetailRow>
       </div>
@@ -563,8 +613,7 @@ function AppointmentDetail({
       ) : null}
 
       <p className={cn("text-[11px]", "text-muted/70")}>
-        Booked {formatDate(toDateKey(new Date(appointment.createdAt)))} ·{" "}
-        {appointment.reference}
+        Reference {appointment.reference}
       </p>
     </div>
   );
