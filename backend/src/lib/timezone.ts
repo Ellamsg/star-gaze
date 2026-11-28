@@ -74,16 +74,32 @@ export function zonedDateKey(date: Date, timeZone = STUDIO_TIMEZONE): string {
   return dateKeyFromParts(year, month, day);
 }
 
-/** The UTC instant when the clock in `timeZone` reads 00:00 on `dateKey`. */
+/**
+ * The UTC instant when the clock in `timeZone` reads 00:00 on `dateKey`.
+ * The same correction loop powers `zonedDateTime` below.
+ */
 export function zonedStartOfDay(
   dateKey: string,
   timeZone = STUDIO_TIMEZONE
 ): Date {
+  return zonedDateTime(dateKey, "00:00", timeZone);
+}
+
+/**
+ * The UTC instant when the clock in `timeZone` reads `time` on `dateKey`.
+ * "2026-12-01" + "09:30" in Africa/Lagos -> 2026-12-01T08:30:00Z.
+ */
+export function zonedDateTime(
+  dateKey: string,
+  time: string,
+  timeZone = STUDIO_TIMEZONE
+): Date {
   const [year, month, day] = dateKey.split("-").map(Number);
-  const target = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  const [hours, minutes] = time.split(":").map(Number);
+  const target = Date.UTC(year, month - 1, day, hours, minutes, 0, 0);
   let guess = new Date(target);
 
-  // Shift the guess by how far its wall clock is from 00:00 on the target day.
+  // Shift the guess by how far its wall clock is from the requested wall clock.
   // Comparing against the target (not against the guess itself) is what stops
   // the loop from subtracting the zone offset again on every pass.
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -102,6 +118,50 @@ export function zonedStartOfDay(
   }
 
   return guess;
+}
+
+/** "09:30" — the studio-local clock time of a UTC instant. */
+export function zonedTimeKey(
+  date: Date,
+  timeZone = STUDIO_TIMEZONE
+): string {
+  const parts = zonedParts(date, timeZone);
+  return `${pad2(parts.hour)}:${pad2(parts.minute)}`;
+}
+
+/** Today's calendar date in the studio timezone. */
+export function studioTodayKey(timeZone = STUDIO_TIMEZONE): string {
+  return zonedDateKey(new Date(), timeZone);
+}
+
+/** Minutes since midnight for "09:30" -> 570. */
+export function minutesFromTime(time: string): number {
+  const [hours, minutes] = time.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+/** 570 -> "09:30". */
+export function timeFromMinutes(total: number): string {
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  return `${pad2(hours)}:${pad2(minutes)}`;
+}
+
+/** Weekday of a calendar key: 0 = Sunday … 6 = Saturday. */
+export function weekdayOfKey(dateKey: string): number {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+}
+
+/** First day ("YYYY-MM-01") of the month containing `dateKey`. */
+export function monthStartKey(dateKey: string): string {
+  return `${dateKey.slice(0, 7)}-01`;
+}
+
+/** Number of days in the given "YYYY-MM" month. */
+export function daysInMonthKey(monthKey: string): number {
+  const [year, month] = monthKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
 /** Add whole calendar days to a "YYYY-MM-DD" key (timezone-free arithmetic). */

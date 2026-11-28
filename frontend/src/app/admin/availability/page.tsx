@@ -3,456 +3,776 @@
 import { useEffect, useMemo, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 
+import { MonthCalendar, monthFromKey } from "@/components/availability/month-calendar";
 import { Icon } from "@/components/admin/icons";
 import {
   Badge,
   Button,
   Card,
-  EmptyState,
   PageHeader,
+  Select,
   Skeleton,
   TextInput,
 } from "@/components/admin/ui";
 import { Spinner } from "@/components/spinner";
 import {
-  useAllSlots,
-  useCancelDay,
-  useCreateSlots,
-  useDeleteSlot,
-  useSetSlotStatus,
+  useAdminDay,
+  useAdminMonth,
+  useClearDayOverride,
+  useCreateBlock,
+  useDeleteBlock,
+  useSaveDayOverride,
+  useSaveSchedule,
+  useScheduleSettings,
 } from "@/hooks/use-availability";
 import { useCancelAppointment } from "@/hooks/use-appointments";
-import { dayKey, formatDate, formatTime, todayKey } from "@/lib/date";
+import { formatDateLong, formatTime, todayKey } from "@/lib/date";
 import type {
-  AddSlotsFormValues,
-  AvailabilityFilterValues,
-  AvailabilitySlotDTO,
+  BlockFormValues,
+  DaySettingsFormValues,
+  ScheduleFormValues,
 } from "@/types/availability";
 
-export default function AvailabilityPage() {
-  const filters = useForm<AvailabilityFilterValues>({
-    defaultValues: { from: "", to: "" },
-  });
+const WEEKDAYS = [
+  { value: 0, label: "Sun" },
+  { value: 1, label: "Mon" },
+  { value: 2, label: "Tue" },
+  { value: 3, label: "Wed" },
+  { value: 4, label: "Thu" },
+  { value: 5, label: "Fri" },
+  { value: 6, label: "Sat" },
+];
 
-  const addForm = useForm<AddSlotsFormValues>({
+function addMinutes(time: string, minutes: number): string {
+  const [hours, mins] = time.split(":").map(Number);
+  const total = Math.min(23 * 60 + 59, hours * 60 + mins + minutes);
+  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(
+    total % 60
+  ).padStart(2, "0")}`;
+}
+
+export default function AvailabilityPage() {
+  const [month, setMonth] = useState("");
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [saved, setSaved] = useState<string | null>(null);
+
+  /* `new Date()` cannot run during the server render, so start in the browser. */
+  useEffect(() => {
+    const today = todayKey();
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMonth((current) => current || today.slice(0, 7));
+    setSelectedDate((current) => current || today);
+  }, []);
+
+  /* Keep the selected day inside the visible month. */
+  useEffect(() => {
+    if (!month || !selectedDate) return;
+    if (monthFromKey(selectedDate) !== month) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setSelectedDate(`${month}-01`);
+    }
+  }, [month, selectedDate]);
+
+  const settingsQuery = useScheduleSettings();
+  const monthQuery = useAdminMonth(month);
+  const dayQuery = useAdminDay(selectedDate);
+
+  const scheduleForm = useForm<ScheduleFormValues>({
     defaultValues: {
-      date: "",
-      times: "09:00, 10:30, 13:00, 15:00",
-      duration: "60",
+      openTime: "09:00",
+      closeTime: "19:00",
+      stepMinutes: "30",
+      openWeekdays: [0, 1, 2, 3, 4, 5, 6],
+      horizonDays: "180",
     },
   });
 
-  const { reset: resetFilters } = filters;
-  const { reset: resetAddForm } = addForm;
+  const dayForm = useForm<DaySettingsFormValues>({
+    defaultValues: {
+      openTime: "09:00",
+      closeTime: "19:00",
+      stepMinutes: "30",
+      note: "",
+    },
+  });
 
-  /*
-   * `new Date()` is not allowed during the server render, so the "today"
-   * defaults are filled in once the page is running in the browser.
-   */
+  const blockForm = useForm<BlockFormValues>({
+    defaultValues: { startTime: "13:00", endTime: "14:00", note: "" },
+  });
+
+  const { reset: resetSchedule } = scheduleForm;
+  const { reset: resetDay } = dayForm;
+  const { reset: resetBlock } = blockForm;
+
   useEffect(() => {
-    const today = todayKey();
-    resetFilters({ from: today, to: dayKey(30) });
-    resetAddForm({
-      date: today,
-      times: "09:00, 10:30, 13:00, 15:00",
-      duration: "60",
+    if (!settingsQuery.data) return;
+    resetSchedule({
+      openTime: settingsQuery.data.openTime,
+      closeTime: settingsQuery.data.closeTime,
+      stepMinutes: String(settingsQuery.data.stepMinutes),
+      openWeekdays: settingsQuery.data.openWeekdays,
+      horizonDays: String(settingsQuery.data.horizonDays),
     });
-  }, [resetFilters, resetAddForm]);
+  }, [settingsQuery.data, resetSchedule]);
 
-  const fromValue = useWatch({ control: filters.control, name: "from" });
-  const toValue = useWatch({ control: filters.control, name: "to" });
-  const dateValue = useWatch({ control: addForm.control, name: "date" });
+  useEffect(() => {
+    const day = dayQuery.data;
+    if (!day) return;
 
-  const selectedDate = dateValue;
-  const hasRange = Boolean(fromValue && toValue);
+    resetDay({
+      openTime: day.override?.openTime ?? day.openTime,
+      closeTime: day.override?.closeTime ?? day.closeTime,
+      stepMinutes: String(day.override?.stepMinutes ?? day.stepMinutes),
+      note: day.override?.note ?? "",
+    });
+    resetBlock({
+      startTime: day.openTime,
+      endTime: addMinutes(day.openTime, 30),
+      note: "",
+    });
+  }, [dayQuery.data, resetDay, resetBlock]);
 
-  const {
-    data: slots = [],
-    isPending,
-    error,
-  } = useAllSlots(fromValue || undefined, toValue || undefined, hasRange);
-  const isLoading = !hasRange || isPending;
+  const openWeekdays = useWatch({
+    control: scheduleForm.control,
+    name: "openWeekdays",
+  });
 
-  const createSlots = useCreateSlots();
-  const setStatus = useSetSlotStatus();
-  const removeSlot = useDeleteSlot();
-  const closeDay = useCancelDay();
+  const saveSchedule = useSaveSchedule();
+  const saveDay = useSaveDayOverride();
+  const clearDay = useClearDayOverride();
+  const createBlock = useCreateBlock();
+  const removeBlock = useDeleteBlock();
   const cancelBooking = useCancelAppointment();
 
-  const [notice, setNotice] = useState<string | null>(null);
-
   const busy =
-    createSlots.isPending ||
-    setStatus.isPending ||
-    removeSlot.isPending ||
-    closeDay.isPending ||
+    saveSchedule.isPending ||
+    saveDay.isPending ||
+    clearDay.isPending ||
+    createBlock.isPending ||
+    removeBlock.isPending ||
     cancelBooking.isPending;
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, AvailabilitySlotDTO[]>();
-    for (const slot of slots) {
-      map.set(slot.date, [...(map.get(slot.date) ?? []), slot]);
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [slots]);
+  const day = dayQuery.data;
+  const closed = day ? day.override?.isClosed === true : false;
+  const usingOverride = Boolean(day?.override);
 
-  const message =
-    notice ??
-    (error instanceof Error ? error.message : error ? "Could not load slots." : null);
+  const dayHeading = selectedDate
+    ? formatDateLong(selectedDate)
+    : "Pick a day";
 
-  const onAddSlots = addForm.handleSubmit(async (values) => {
-    const times = values.times
-      .split(",")
-      .map((value) => value.trim())
-      .filter(Boolean);
+  const monthError =
+    monthQuery.error instanceof Error
+      ? monthQuery.error.message
+      : monthQuery.error
+        ? "Could not load this month."
+        : null;
 
-    if (times.length === 0) {
-      setNotice("Add at least one time, e.g. 09:00, 13:00.");
+  const dayError =
+    dayQuery.error instanceof Error
+      ? dayQuery.error.message
+      : dayQuery.error
+        ? "Could not load this day."
+        : null;
+
+  const blocks = useMemo(() => day?.blocks ?? [], [day]);
+
+  function selectDate(date: string) {
+    setSelectedDate(date);
+    setNotice(null);
+    setSaved(null);
+  }
+
+  function toggleWeekday(value: number, checked: boolean) {
+    const current = scheduleForm.getValues("openWeekdays");
+    const next = checked
+      ? [...new Set([...current, value])].sort((a, b) => a - b)
+      : current.filter((dayValue) => dayValue !== value);
+    scheduleForm.setValue("openWeekdays", next, { shouldDirty: true });
+  }
+
+  const onSaveSchedule = scheduleForm.handleSubmit(async (values) => {
+    setNotice(null);
+    setSaved(null);
+
+    if (values.openWeekdays.length === 0) {
+      setNotice("Keep at least one day open in the default week.");
       return;
     }
 
-    setNotice(null);
-
     try {
-      const result = await createSlots.mutateAsync({
-        slots: times.map((time) => ({ date: values.date, time })),
-        durationMin: Number(values.duration) || 60,
+      await saveSchedule.mutateAsync({
+        openTime: values.openTime,
+        closeTime: values.closeTime,
+        stepMinutes: Number(values.stepMinutes),
+        openWeekdays: values.openWeekdays,
+        horizonDays: Number(values.horizonDays),
       });
-
-      addForm.setValue("times", "");
-
-      if (result.skipped > 0) {
-        setNotice(
-          `${result.skipped} slot${result.skipped === 1 ? "" : "s"} already existed and were skipped.`
-        );
-      }
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not add slots.");
+      setSaved("Default hours saved. Every open day now uses them.");
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not save the default hours."
+      );
     }
   });
 
-  async function onToggle(slot: AvailabilitySlotDTO) {
+  const onSaveDay = dayForm.handleSubmit(async (values) => {
+    if (!selectedDate) return;
     setNotice(null);
+    setSaved(null);
+
     try {
-      await setStatus.mutateAsync({
-        id: slot.id,
-        status: slot.status === "OPEN" ? "BLOCKED" : "OPEN",
+      await saveDay.mutateAsync({
+        date: selectedDate,
+        payload: {
+          isClosed: false,
+          openTime: values.openTime,
+          closeTime: values.closeTime,
+          stepMinutes: Number(values.stepMinutes),
+          note: values.note.trim() || undefined,
+        },
       });
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not update slot.");
-    }
-  }
-
-  async function onRemove(slot: AvailabilitySlotDTO) {
-    if (
-      !window.confirm(
-        `Delete ${formatTime(slot.time)} on ${formatDate(slot.date)}?`
-      )
-    ) {
-      return;
-    }
-
-    setNotice(null);
-    try {
-      await removeSlot.mutateAsync(slot.id);
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not delete slot.");
-    }
-  }
-
-  async function onCloseDay() {
-    if (!selectedDate) {
-      setNotice("Choose a date in the Add times form first.");
-      return;
-    }
-
-    if (!window.confirm(`Close every open slot on ${formatDate(selectedDate)}?`)) {
-      return;
-    }
-
-    setNotice(null);
-    try {
-      const result = await closeDay.mutateAsync(selectedDate);
-      if (result.bookedLeftAlone > 0) {
-        setNotice(
-          `${result.bookedLeftAlone} booked slot${result.bookedLeftAlone === 1 ? "" : "s"} were left alone — cancel those bookings below.`
-        );
-      }
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not close that day.");
-    }
-  }
-
-  async function onCancelBooking(slot: AvailabilitySlotDTO) {
-    if (!slot.appointmentId) return;
-
-    if (
-      !window.confirm(
-        `Cancel the booking at ${formatTime(slot.time)} on ${formatDate(slot.date)}? The time will reopen.`
-      )
-    ) {
-      return;
-    }
-
-    setNotice(null);
-    try {
-      await cancelBooking.mutateAsync(slot.appointmentId);
-    } catch (err) {
+      setSaved("This day now has its own hours.");
+    } catch (error) {
       setNotice(
-        err instanceof Error ? err.message : "Could not cancel that booking."
+        error instanceof Error ? error.message : "Could not save this day."
+      );
+    }
+  });
+
+  async function closeThisDay() {
+    if (!selectedDate) return;
+    if (!window.confirm(`Close ${formatDateLong(selectedDate)} completely?`)) {
+      return;
+    }
+
+    setNotice(null);
+    setSaved(null);
+    try {
+      await saveDay.mutateAsync({
+        date: selectedDate,
+        payload: { isClosed: true, note: "Closed by the studio" },
+      });
+      setSaved("That day is closed. Existing bookings are untouched.");
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not close this day."
       );
     }
   }
+
+  async function useDefaultHours() {
+    if (!selectedDate) return;
+    setNotice(null);
+    setSaved(null);
+    try {
+      await clearDay.mutateAsync(selectedDate);
+      setSaved("Back to the default week.");
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not reset this day."
+      );
+    }
+  }
+
+  const onAddBlock = blockForm.handleSubmit(async (values) => {
+    if (!selectedDate) return;
+    setNotice(null);
+    setSaved(null);
+
+    try {
+      await createBlock.mutateAsync({
+        date: selectedDate,
+        startTime: values.startTime,
+        endTime: values.endTime,
+        note: values.note.trim() || undefined,
+      });
+      blockForm.setValue("note", "");
+      setSaved("Time closed for that day.");
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not close that time."
+      );
+    }
+  });
+
+  async function quickClose(startTime: string) {
+    if (!selectedDate) return;
+    setNotice(null);
+    setSaved(null);
+    try {
+      await createBlock.mutateAsync({
+        date: selectedDate,
+        startTime,
+        endTime: addMinutes(startTime, day?.stepMinutes ?? 30),
+        note: "Closed",
+      });
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not close that time."
+      );
+    }
+  }
+
+  async function onRemoveBlock(id: string) {
+    setNotice(null);
+    setSaved(null);
+    try {
+      await removeBlock.mutateAsync(id);
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not reopen that time."
+      );
+    }
+  }
+
+  async function onCancelBooking(id: string, label: string) {
+    if (
+      !window.confirm(
+        `Cancel ${label}? The time reopens for other clients immediately.`
+      )
+    ) {
+      return;
+    }
+
+    setNotice(null);
+    setSaved(null);
+    try {
+      await cancelBooking.mutateAsync(id);
+      setSaved("Booking cancelled and the time reopened.");
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "Could not cancel that booking."
+      );
+    }
+  }
+
+  const message = notice ?? monthError ?? dayError;
 
   return (
     <div>
       <PageHeader
         eyebrow="The chair"
         title="Availability"
-        accent="& times"
-        description="Add the dates and times clients can book. Booked slots close themselves; cancel a booking to reopen its time."
+        accent="calendar"
+        description="Every day is open by default. Change the default week once, then only touch the exceptions: a closed day, different hours, or a closed time."
       />
 
-      <Card className="p-4 sm:p-5">
-        <form onSubmit={onAddSlots}>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
-            Add times
-          </p>
-
-          <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] text-muted">Date</span>
-              <TextInput
-                type="date"
-                {...addForm.register("date", { required: "Pick a date" })}
-              />
-              {addForm.formState.errors.date ? (
-                <span className="text-[11px] text-pink">
-                  {addForm.formState.errors.date.message}
-                </span>
-              ) : null}
-            </label>
-
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] text-muted">
-                Times (comma separated)
-              </span>
-              <TextInput
-                placeholder="09:00, 13:00"
-                {...addForm.register("times", {
-                  required: "Add at least one time",
-                })}
-              />
-              {addForm.formState.errors.times ? (
-                <span className="text-[11px] text-pink">
-                  {addForm.formState.errors.times.message}
-                </span>
-              ) : null}
-            </label>
-
-            <label className="flex flex-col gap-1.5">
-              <span className="text-[11px] text-muted">Minutes per slot</span>
-              <TextInput
-                type="number"
-                min={5}
-                max={600}
-                {...addForm.register("duration", {
-                  required: "Set a slot length",
-                  min: { value: 5, message: "At least 5 minutes" },
-                  max: { value: 600, message: "At most 600 minutes" },
-                })}
-              />
-              {addForm.formState.errors.duration ? (
-                <span className="text-[11px] text-pink">
-                  {addForm.formState.errors.duration.message}
-                </span>
-              ) : null}
-            </label>
-          </div>
-
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button
-              type="submit"
-              icon="plus"
-              loading={createSlots.isPending}
-              disabled={busy}
-            >
-              {createSlots.isPending ? "Adding…" : "Add these times"}
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={onCloseDay}
-              loading={closeDay.isPending}
-              disabled={busy}
-            >
-              Close entire day
-            </Button>
-          </div>
-        </form>
-      </Card>
-
-      <div className="mt-4 flex flex-wrap items-end gap-2">
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] text-muted">Show from</span>
-          <TextInput
-            type="date"
-            className="h-10"
-            {...filters.register("from")}
-          />
-        </label>
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] text-muted">to</span>
-          <TextInput
-            type="date"
-            className="h-10"
-            {...filters.register("to")}
-          />
-        </label>
-      </div>
-
       {message ? (
-        <p className="mt-3 rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 text-[12px] leading-relaxed text-amber-200/90">
+        <p className="mb-4 rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] px-4 py-3 text-[12px] leading-relaxed text-amber-200/90">
           {message}
         </p>
       ) : null}
 
-      {isLoading ? (
-        <AvailabilitySkeleton />
-      ) : grouped.length === 0 ? (
-        <div className="mt-6">
-          <EmptyState
-            icon="calendar"
-            title="No times yet"
-            body="Add a date and a few times above — they'll appear on the booking page immediately."
-          />
-        </div>
-      ) : (
-        <ul className="mt-4 space-y-2.5">
-          {grouped.map(([dayValue, daySlots]) => (
-            <li
-              key={dayValue}
-              className="rounded-[24px] border border-hairline/60 bg-surface/70 p-3 sm:p-4"
-            >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[13px] font-semibold text-cream">
-                  {formatDate(dayValue)}
+      {saved ? (
+        <p className="mb-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.06] px-4 py-3 text-[12px] leading-relaxed text-emerald-300">
+          {saved}
+        </p>
+      ) : null}
+
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        {/* ---------------------------- calendar ---------------------------- */}
+        <div>
+          {month ? (
+            <MonthCalendar
+              month={month}
+              days={monthQuery.data?.days ?? []}
+              selected={selectedDate}
+              onSelect={selectDate}
+              onMonthChange={(next) => {
+                setMonth(next);
+                setNotice(null);
+                setSaved(null);
+              }}
+              loading={monthQuery.isPending}
+              mode="admin"
+            />
+          ) : (
+            <Skeleton className="h-[360px]" />
+          )}
+
+          <Card className="mt-4 p-4 sm:p-5">
+            <form onSubmit={onSaveSchedule}>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                  Default week
                 </p>
-                <span className="text-[11px] text-muted">
-                  {daySlots.filter((slot) => slot.status === "OPEN").length} open ·{" "}
-                  {daySlots.filter((slot) => slot.status === "BOOKED").length}{" "}
-                  booked
-                </span>
+                <Badge tone="pink">Applies to every open day</Badge>
               </div>
 
-              <div className="mt-2.5 flex flex-wrap gap-2">
-                {daySlots.map((slot) => {
-                  const toggling =
-                    setStatus.isPending && setStatus.variables?.id === slot.id;
-                  const removing =
-                    removeSlot.isPending && removeSlot.variables === slot.id;
-                  const cancelling =
-                    cancelBooking.isPending &&
-                    cancelBooking.variables === slot.appointmentId;
+              <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] text-muted">Opens</span>
+                  <TextInput
+                    type="time"
+                    {...scheduleForm.register("openTime", {
+                      required: "Pick an opening time",
+                    })}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] text-muted">Closes</span>
+                  <TextInput
+                    type="time"
+                    {...scheduleForm.register("closeTime", {
+                      required: "Pick a closing time",
+                    })}
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] text-muted">Start times every</span>
+                  <Select {...scheduleForm.register("stepMinutes")}>
+                    <option value="15">15 minutes</option>
+                    <option value="30">30 minutes</option>
+                    <option value="45">45 minutes</option>
+                    <option value="60">60 minutes</option>
+                  </Select>
+                </label>
+              </div>
 
+              <p className="mt-3 text-[11px] text-muted">Open on these days</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {WEEKDAYS.map((weekday) => {
+                  const active = openWeekdays.includes(weekday.value);
                   return (
-                    <div
-                      key={slot.id}
-                      className="flex items-center gap-1.5 rounded-full border border-hairline/70 bg-white/[0.03] py-1 pl-3 pr-1"
+                    <button
+                      key={weekday.value}
+                      type="button"
+                      onClick={() => toggleWeekday(weekday.value, !active)}
+                      aria-pressed={active}
+                      className={`rounded-full border px-3 py-1.5 text-[11.5px] font-medium transition ${
+                        active
+                          ? "border-pink/60 bg-pink/15 text-pink"
+                          : "border-white/10 bg-white/[0.03] text-muted hover:text-cream"
+                      }`}
                     >
-                      <span className="text-[12px] tabular-nums text-cream">
-                        {formatTime(slot.time)}
-                      </span>
-
-                      {slot.status === "BOOKED" ? (
-                        <Badge tone="green">Booked</Badge>
-                      ) : slot.status === "BLOCKED" ? (
-                        <Badge tone="neutral">Closed</Badge>
-                      ) : (
-                        <Badge tone="pink">Open</Badge>
-                      )}
-
-                      {slot.status !== "BOOKED" ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => onToggle(slot)}
-                            disabled={busy}
-                            aria-busy={toggling || undefined}
-                            className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] text-cream/80 hover:text-cream disabled:cursor-not-allowed"
-                          >
-                            {toggling ? (
-                              <>
-                                <Spinner size={12} />
-                                {slot.status === "OPEN"
-                                  ? "Closing…"
-                                  : "Reopening…"}
-                              </>
-                            ) : slot.status === "OPEN" ? (
-                              "Close"
-                            ) : (
-                              "Reopen"
-                            )}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onRemove(slot)}
-                            disabled={busy}
-                            aria-label="Delete slot"
-                            className="rounded-full p-1 text-muted hover:text-pink disabled:cursor-not-allowed"
-                          >
-                            {removing ? (
-                              <Spinner size={12} />
-                            ) : (
-                              <Icon name="trash" size={13} />
-                            )}
-                          </button>
-                        </>
-                      ) : slot.appointmentId ? (
-                        <button
-                          type="button"
-                          onClick={() => onCancelBooking(slot)}
-                          disabled={busy}
-                          className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] text-pink hover:text-cream disabled:cursor-not-allowed"
-                        >
-                          {cancelling ? <Spinner size={11} /> : null}
-                          {cancelling ? "Cancelling…" : "Cancel booking"}
-                        </button>
-                      ) : null}
-                    </div>
+                      {weekday.label}
+                    </button>
                   );
                 })}
               </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
 
-/* -------------------------------------------------------------------------- */
-/*  Skeleton                                                                   */
-/* -------------------------------------------------------------------------- */
+              <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
+                <label className="flex flex-col gap-1.5">
+                  <span className="text-[11px] text-muted">
+                    Clients can book this many days ahead
+                  </span>
+                  <TextInput
+                    type="number"
+                    min={1}
+                    max={730}
+                    {...scheduleForm.register("horizonDays", {
+                      required: "Set the booking window",
+                    })}
+                  />
+                </label>
+              </div>
 
-function AvailabilitySkeleton() {
-  return (
-    <div role="status" aria-label="Loading availability" className="mt-4 space-y-2.5">
-      {Array.from({ length: 3 }).map((_, index) => (
-        <div
-          key={index}
-          className="rounded-[24px] border border-hairline/60 bg-surface/70 p-3 sm:p-4"
-        >
-          <div className="flex items-center justify-between gap-2">
-            <Skeleton className="h-3.5 w-28" />
-            <Skeleton className="h-3 w-20" />
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {Array.from({ length: 5 }).map((__, chip) => (
-              <Skeleton key={chip} className="h-7 w-24 rounded-full" />
-            ))}
-          </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  type="submit"
+                  icon="check"
+                  loading={saveSchedule.isPending}
+                  disabled={busy}
+                >
+                  {saveSchedule.isPending ? "Saving…" : "Save default week"}
+                </Button>
+              </div>
+            </form>
+          </Card>
         </div>
-      ))}
+
+        {/* ---------------------------- day panel ---------------------------- */}
+        <Card className="p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                Selected day
+              </p>
+              <h2 className="mt-1 font-display text-[clamp(1.4rem,4vw,1.9rem)] uppercase leading-none text-cream">
+                {dayHeading}
+              </h2>
+              {day ? (
+                <p className="mt-1 text-[12px] text-muted">
+                  {closed ? (
+                    <>Closed all day</>
+                  ) : usingOverride ? (
+                    <>
+                      Custom hours · {formatTime(day.openTime)} –{" "}
+                      {formatTime(day.closeTime)}
+                    </>
+                  ) : (
+                    <>
+                      Default hours · {formatTime(day.openTime)} –{" "}
+                      {formatTime(day.closeTime)}
+                    </>
+                  )}
+                </p>
+              ) : null}
+            </div>
+
+            {day ? (
+              <Badge tone={closed ? "red" : usingOverride ? "amber" : "green"}>
+                {closed ? "Closed" : usingOverride ? "Custom" : "Default"}
+              </Badge>
+            ) : null}
+          </div>
+
+          {!selectedDate || dayQuery.isPending ? (
+            <div className="mt-5 space-y-2">
+              <Skeleton className="h-10" />
+              <Skeleton className="h-24" />
+              <Skeleton className="h-24" />
+            </div>
+          ) : day ? (
+            <>
+              {day.booked.length > 0 ? (
+                <div className="mt-5">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                    Booked
+                  </p>
+                  <ul className="mt-2 space-y-2">
+                    {day.booked.map((booking) => (
+                      <li
+                        key={booking.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-emerald-400/20 bg-emerald-400/[0.05] px-3 py-2.5"
+                      >
+                        <span className="min-w-0">
+                          <span className="text-[12.5px] font-semibold tabular-nums text-cream">
+                            {formatTime(booking.time)} – {formatTime(booking.endTime)}
+                          </span>
+                          <span className="ml-2 text-[11.5px] text-muted">
+                            {booking.clientName} · {booking.reference}
+                          </span>
+                          <span className="block text-[11px] text-muted/80">
+                            {booking.serviceNames}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onCancelBooking(
+                              booking.id,
+                              `${booking.reference} at ${formatTime(booking.time)}`
+                            )
+                          }
+                          disabled={busy}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] text-pink hover:text-cream disabled:cursor-not-allowed"
+                        >
+                          {cancelBooking.isPending &&
+                          cancelBooking.variables === booking.id ? (
+                            <Spinner size={11} />
+                          ) : null}
+                          Cancel booking
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+
+              <form onSubmit={onSaveDay} className="mt-5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                  Hours for this day only
+                </p>
+
+                <div className="mt-2 grid gap-2.5 sm:grid-cols-3">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[11px] text-muted">Opens</span>
+                    <TextInput
+                      type="time"
+                      {...dayForm.register("openTime", {
+                        required: "Pick an opening time",
+                      })}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[11px] text-muted">Closes</span>
+                    <TextInput
+                      type="time"
+                      {...dayForm.register("closeTime", {
+                        required: "Pick a closing time",
+                      })}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1.5">
+                    <span className="text-[11px] text-muted">Every</span>
+                    <Select {...dayForm.register("stepMinutes")}>
+                      <option value="15">15 min</option>
+                      <option value="30">30 min</option>
+                      <option value="45">45 min</option>
+                      <option value="60">60 min</option>
+                    </Select>
+                  </label>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    type="submit"
+                    icon="check"
+                    size="sm"
+                    loading={saveDay.isPending}
+                    disabled={busy}
+                  >
+                    {saveDay.isPending ? "Saving…" : "Save this day"}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={closeThisDay}
+                    disabled={busy || closed}
+                  >
+                    Close all day
+                  </Button>
+                  {usingOverride ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={useDefaultHours}
+                      disabled={busy}
+                    >
+                      Use default hours
+                    </Button>
+                  ) : null}
+                </div>
+              </form>
+
+              <div className="mt-6 border-t border-hairline/60 pt-4">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                  Times on {formatDateLong(day.date)}
+                </p>
+
+                {closed ? (
+                  <p className="mt-2 rounded-2xl border border-rose-400/20 bg-rose-400/[0.05] px-3 py-2.5 text-[12px] text-rose-200">
+                    This day is closed. Clients cannot pick it. Use “Use default
+                    hours” to reopen it.
+                  </p>
+                ) : day.times.length === 0 ? (
+                  <p className="mt-2 text-[12px] text-muted">
+                    No start times fit on this day. Check the hours or reopen a
+                    closed time.
+                  </p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {day.times.map((slot) => (
+                      <span
+                        key={slot.time}
+                        className={`inline-flex items-center gap-1 rounded-full border py-1 pl-2.5 pr-1 text-[11.5px] tabular-nums ${
+                          slot.past
+                            ? "border-white/5 text-muted/40"
+                            : "border-white/10 bg-white/[0.03] text-cream"
+                        }`}
+                      >
+                        {formatTime(slot.time)}
+                        {slot.past ? (
+                          <span className="pr-1 text-[9.5px] uppercase tracking-wide text-muted/50">
+                            past
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => quickClose(slot.time)}
+                            disabled={busy}
+                            className="rounded-full px-1.5 py-0.5 text-[10px] text-muted hover:bg-pink/10 hover:text-pink disabled:cursor-not-allowed"
+                            title={`Close ${formatTime(slot.time)} on this day`}
+                          >
+                            close
+                          </button>
+                        )}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <form onSubmit={onAddBlock} className="mt-4">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+                    Close a time
+                  </p>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-[11px] text-muted">From</span>
+                      <TextInput
+                        type="time"
+                        {...blockForm.register("startTime", {
+                          required: "Pick a start time",
+                        })}
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1.5">
+                      <span className="text-[11px] text-muted">To</span>
+                      <TextInput
+                        type="time"
+                        {...blockForm.register("endTime", {
+                          required: "Pick an end time",
+                        })}
+                      />
+                    </label>
+                  </div>
+                  <label className="mt-2 flex flex-col gap-1.5">
+                    <span className="text-[11px] text-muted">Reason (optional)</span>
+                    <TextInput
+                      placeholder="Lunch, school run, training…"
+                      {...blockForm.register("note")}
+                    />
+                  </label>
+
+                  <div className="mt-3">
+                    <Button
+                      type="submit"
+                      icon="plus"
+                      size="sm"
+                      loading={createBlock.isPending}
+                      disabled={busy}
+                    >
+                      {createBlock.isPending ? "Closing…" : "Close this time"}
+                    </Button>
+                  </div>
+                </form>
+
+                {blocks.length > 0 ? (
+                  <ul className="mt-4 space-y-2">
+                    {blocks.map((block) => (
+                      <li
+                        key={block.id}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/8 bg-white/[0.02] px-3 py-2"
+                      >
+                        <span className="text-[12px] text-cream">
+                          {formatTime(block.startTime)} – {formatTime(block.endTime)}
+                          {block.note ? (
+                            <span className="ml-2 text-[11px] text-muted">
+                              {block.note}
+                            </span>
+                          ) : null}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onRemoveBlock(block.id)}
+                          disabled={busy}
+                          className="inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] text-muted hover:text-cream disabled:cursor-not-allowed"
+                        >
+                          {removeBlock.isPending &&
+                          removeBlock.variables === block.id ? (
+                            <Spinner size={11} />
+                          ) : (
+                            <Icon name="trash" size={12} />
+                          )}
+                          Reopen
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </>
+          ) : (
+            <p className="mt-5 text-[13px] text-muted">
+              Pick a day in the calendar to edit its hours.
+            </p>
+          )}
+        </Card>
+      </div>
     </div>
   );
 }

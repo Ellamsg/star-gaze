@@ -1,70 +1,112 @@
 import { Router } from "express";
 
 import {
-  cancelDay,
-  createSlots,
-  deleteSlot,
-  listAllSlots,
-  listOpenSlots,
-  updateSlot,
+  createBlock,
+  deleteBlock,
+  deleteDayOverride,
+  getAdminDayHandler,
+  getAdminMonth,
+  getPublicDay,
+  getPublicMonth,
+  getSettings,
+  updateSettings,
+  upsertDayOverride,
 } from "../controllers/availability.controller";
 import { asyncHandler } from "../lib/async-handler";
 import { requireAuth, requirePermission } from "../middleware/auth";
 import { validate } from "../middleware/validate";
 import {
-  cancelDaySchema,
-  createSlotsSchema,
-  listSlotsQuery,
-  slotIdParam,
-  updateSlotSchema,
+  adminDayQuery,
+  adminMonthQuery,
+  blockIdParam,
+  createBlockSchema,
+  dayOverrideSchema,
+  overrideDateQuery,
+  publicDayQuery,
+  publicMonthQuery,
+  scheduleSchema,
 } from "../validators/availability.schema";
 
 export const availabilityRouter = Router();
 
-// Public — what the booking page reads.
+/* ------------------------------- public -------------------------------- */
+
+// One date's open start times. The booking page calls this after a client
+// has picked services, so the duration is known.
 availabilityRouter.get(
   "/",
-  validate({ query: listSlotsQuery }),
-  asyncHandler(listOpenSlots)
+  validate({ query: publicDayQuery }),
+  asyncHandler(getPublicDay)
 );
 
-// Admin — everything, including booked + blocked.
+// Month grid: which dates are open, full, closed or past.
 availabilityRouter.get(
-  "/all",
-  requireAuth,
-  requirePermission("availability:write"),
-  validate({ query: listSlotsQuery }),
-  asyncHandler(listAllSlots)
+  "/month",
+  validate({ query: publicMonthQuery }),
+  asyncHandler(getPublicMonth)
 );
 
-availabilityRouter.post(
-  "/",
+/* -------------------------------- admin -------------------------------- */
+
+availabilityRouter.get(
+  "/admin/settings",
   requireAuth,
   requirePermission("availability:write"),
-  validate({ body: createSlotsSchema }),
-  asyncHandler(createSlots)
+  asyncHandler(getSettings)
 );
 
-availabilityRouter.post(
-  "/cancel-day",
+availabilityRouter.put(
+  "/admin/settings",
   requireAuth,
   requirePermission("availability:write"),
-  validate({ body: cancelDaySchema }),
-  asyncHandler(cancelDay)
+  validate({ body: scheduleSchema }),
+  asyncHandler(updateSettings)
 );
 
-availabilityRouter.patch(
-  "/:id",
+availabilityRouter.get(
+  "/admin/month",
   requireAuth,
   requirePermission("availability:write"),
-  validate({ params: slotIdParam, body: updateSlotSchema }),
-  asyncHandler(updateSlot)
+  validate({ query: adminMonthQuery }),
+  asyncHandler(getAdminMonth)
+);
+
+availabilityRouter.get(
+  "/admin/day",
+  requireAuth,
+  requirePermission("availability:write"),
+  validate({ query: adminDayQuery }),
+  asyncHandler(getAdminDayHandler)
+);
+
+availabilityRouter.put(
+  "/admin/day",
+  requireAuth,
+  requirePermission("availability:write"),
+  validate({ query: overrideDateQuery, body: dayOverrideSchema }),
+  asyncHandler(upsertDayOverride)
 );
 
 availabilityRouter.delete(
-  "/:id",
+  "/admin/day",
   requireAuth,
   requirePermission("availability:write"),
-  validate({ params: slotIdParam }),
-  asyncHandler(deleteSlot)
+  validate({ query: overrideDateQuery }),
+  asyncHandler(deleteDayOverride)
+);
+
+availabilityRouter.post(
+  "/admin/blocks",
+  requireAuth,
+  requirePermission("availability:write"),
+  validate({ body: createBlockSchema }),
+  asyncHandler(createBlock)
+);
+
+availabilityRouter.delete(
+  "/admin/blocks/:id",
+  requireAuth,
+  requirePermission("availability:write"),
+  validate({ params: blockIdParam }),
+  asyncHandler(deleteBlock)
 );

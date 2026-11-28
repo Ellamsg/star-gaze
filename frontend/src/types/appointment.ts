@@ -75,7 +75,10 @@ export type AppointmentDTO = {
 
 /** Body sent to POST /api/appointments */
 export type CreateAppointmentPayload = {
-  slotId: string;
+  /** Calendar date in the studio timezone, e.g. "2026-12-01". */
+  date: string;
+  /** 24-hour start time, e.g. "10:30". */
+  time: string;
   serviceIds: string[];
   name: string;
   phone: string;

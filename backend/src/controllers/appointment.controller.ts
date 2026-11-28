@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
+import {
+  appointmentsForDay,
+  buildOpenTimes,
+  getDayState,
+} from "../lib/availability";
 import { verifyPhotos } from "../lib/cloudinary";
 import { prisma } from "../lib/prisma";
 import { HttpError } from "../lib/http-error";
+import { minutesFromTime } from "../lib/timezone";
 import type {
   CreateAppointmentInput,
   UpdateAppointmentStatusInput,
@@ -152,16 +158,7 @@ export async function createAppointment(
 ): Promise<void> {
   const input = req.body as CreateAppointmentInput;
 
-  /* 1 — the slot must still exist and be open */
-  const slot = await prisma.availabilitySlot.findUnique({
-    where: { id: input.slotId },
-  });
-  if (!slot) throw new HttpError(404, "That time slot no longer exists.");
-  if (slot.status !== "OPEN") {
-    throw new HttpError(409, "That time was just taken. Please pick another slot.");
-  }
-
-  /* 2 — services must exist and fit inside the slot */
+  /* 1 — services must exist and fit the requested time */
   const uniqueIds = [...new Set(input.serviceIds)];
   const found = await prisma.service.findMany({
     where: { id: { in: uniqueIds }, active: true },
@@ -178,15 +175,54 @@ export async function createAppointment(
     (sum, service) => sum + Number(service.price),
     0
   );
-  const slotMin = Math.round(
-    (slot.endAt.getTime() - slot.startAt.getTime()) / 60_000
-  );
 
-  if (totalMin > slotMin) {
-    throw new HttpError(
-      400,
-      `That slot is ${slotMin} minutes long but your services need ${totalMin}. Pick a longer slot or fewer services.`
+  /* 2 — resolve the requested time: legacy slot row, or calendar date + time */
+  let slotId: string | null = null;
+  let startAt: Date;
+  let endAt: Date;
+
+  if (input.slotId) {
+    const slot = await prisma.availabilitySlot.findUnique({
+      where: { id: input.slotId },
+    });
+    if (!slot) throw new HttpError(404, "That time slot no longer exists.");
+    if (slot.status !== "OPEN") {
+      throw new HttpError(409, "That time was just taken. Please pick another slot.");
+    }
+
+    const slotMin = Math.round(
+      (slot.endAt.getTime() - slot.startAt.getTime()) / 60_000
     );
+    if (totalMin > slotMin) {
+      throw new HttpError(
+        400,
+        `That slot is ${slotMin} minutes long but your services need ${totalMin}. Pick a longer slot or fewer services.`
+      );
+    }
+
+    slotId = slot.id;
+    startAt = slot.startAt;
+    endAt = new Date(slot.startAt.getTime() + totalMin * 60_000);
+  } else {
+    const dateKey = input.date!;
+    const time = input.time!;
+    const state = await getDayState(dateKey);
+    const appointments = await appointmentsForDay(dateKey);
+    const open = buildOpenTimes(state, {
+      durationMin: totalMin,
+      appointments,
+    });
+    const match = open.find((slot) => slot.time === time);
+
+    if (!match) {
+      throw new HttpError(
+        409,
+        "That time was just taken. Please pick another time."
+      );
+    }
+
+    startAt = new Date(match.startAt);
+    endAt = new Date(match.endAt);
   }
 
   /* 2b — verify any uploaded photos with Cloudinary */
@@ -224,16 +260,55 @@ if (input.photoIds?.length) {
         },
       });
 
-  /* 4 — claim the slot + create the booking atomically */
+  /* 4 — claim the time + create the booking atomically */
   const appointment = await prisma.$transaction(async (tx) => {
-    const claimed = await tx.availabilitySlot.updateMany({
-      where: { id: slot.id, status: "OPEN" },
-      data: { status: "BOOKED" },
-    });
+    if (slotId) {
+      const claimed = await tx.availabilitySlot.updateMany({
+        where: { id: slotId, status: "OPEN" },
+        data: { status: "BOOKED" },
+      });
 
-    // Someone else won the race between step 1 and here.
-    if (claimed.count !== 1) {
-      throw new HttpError(409, "That time was just taken. Please pick another slot.");
+      // Someone else won the race between step 1 and here.
+      if (claimed.count !== 1) {
+        throw new HttpError(409, "That time was just taken. Please pick another slot.");
+      }
+    } else {
+      // Calendar bookings have no slot row to lock, so serialise every booking
+      // for this studio-local date. The second request re-checks overlap after
+      // the first one commits and gets a clean 409.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`booking:${input.date}`}))`;
+
+      const conflict = await tx.appointment.count({
+        where: {
+          status: { in: ["PENDING", "CONFIRMED", "COMPLETED", "NO_SHOW"] },
+          startAt: { lt: endAt },
+          endAt: { gt: startAt },
+        },
+      });
+      if (conflict > 0) {
+        throw new HttpError(
+          409,
+          "That time was just taken. Please pick another time."
+        );
+      }
+
+      // The admin may have closed this time while the form was being filled in.
+      const blocks = await tx.scheduleBlock.findMany({
+        where: { date: input.date! },
+      });
+      const startMin = minutesFromTime(input.time!);
+      const endMin = startMin + totalMin;
+      const blocked = blocks.some(
+        (block) =>
+          startMin < minutesFromTime(block.endTime) &&
+          endMin > minutesFromTime(block.startTime)
+      );
+      if (blocked) {
+        throw new HttpError(
+          409,
+          "That time was just closed. Please pick another time."
+        );
+      }
     }
 
     return tx.appointment.create({
@@ -242,9 +317,9 @@ if (input.photoIds?.length) {
         manageToken: randomUUID(),
         clientId: client.id,
         serviceId: services[0].id,
-        slotId: slot.id,
-        startAt: slot.startAt,
-        endAt: new Date(slot.startAt.getTime() + totalMin * 60_000),
+        slotId,
+        startAt,
+        endAt,
         price: totalPrice,
         status: "PENDING",
         notes: input.note ?? null,

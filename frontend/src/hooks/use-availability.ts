@@ -3,101 +3,136 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
-  cancelDay,
-  createSlots,
-  deleteSlot,
-  fetchAllSlots,
-  fetchOpenSlots,
-  setSlotStatus,
+  clearDayOverride,
+  createBlock,
+  deleteBlock,
+  fetchAdminDay,
+  fetchAdminMonth,
+  fetchPublicDay,
+  fetchPublicMonth,
+  fetchScheduleSettings,
+  saveDayOverride,
+  saveScheduleSettings,
 } from "@/lib/api/availability";
-import { dayKey, todayKey } from "@/lib/date";
 import { STALE_TIME } from "@/lib/query-config";
-import type { CreateSlotsPayload } from "@/types/availability";
+import type {
+  CreateBlockPayload,
+  DayOverridePayload,
+  UpdateSchedulePayload,
+} from "@/types/availability";
 
 export const availabilityKeys = {
   all: ["availability"] as const,
-  open: (from?: string, to?: string, minDuration?: number) =>
-    [
-      ...availabilityKeys.all,
-      "open",
-      from ?? null,
-      to ?? null,
-      minDuration ?? null,
-    ] as const,
-  list: (from?: string, to?: string) =>
-    [...availabilityKeys.all, "all", from ?? null, to ?? null] as const,
+  publicMonth: (month: string, duration: number) =>
+    [...availabilityKeys.all, "public", "month", month, duration] as const,
+  publicDay: (date: string, duration: number) =>
+    [...availabilityKeys.all, "public", "day", date, duration] as const,
+  adminMonth: (month: string) =>
+    [...availabilityKeys.all, "admin", "month", month] as const,
+  adminDay: (date: string) =>
+    [...availabilityKeys.all, "admin", "day", date] as const,
+  settings: () => [...availabilityKeys.all, "settings"] as const,
 };
 
-/**
- * Public open slots for the booking page. When `from`/`to` are omitted the
- * dates are worked out inside the query function, so no `new Date()` runs
- * during the server render.
- */
-export function useOpenSlots(
-  from?: string,
-  to?: string,
-  minDuration?: number,
-) {
+/* -------------------------------- public -------------------------------- */
+
+export function usePublicMonth(month: string, duration: number) {
   return useQuery({
-    queryKey: availabilityKeys.open(from, to, minDuration),
-    queryFn: () =>
-      fetchOpenSlots(from ?? todayKey(), to ?? dayKey(60), minDuration),
+    queryKey: availabilityKeys.publicMonth(month, duration),
+    queryFn: () => fetchPublicMonth(month, duration),
+    enabled: Boolean(month),
     staleTime: STALE_TIME.openSlots,
   });
 }
 
-/** Admin slots (open + booked + blocked). */
-export function useAllSlots(from?: string, to?: string, enabled = true) {
+export function usePublicDay(date: string | null, duration: number) {
   return useQuery({
-    queryKey: availabilityKeys.list(from, to),
-    queryFn: () => fetchAllSlots(from ?? todayKey(), to ?? dayKey(30)),
-    enabled,
+    queryKey: availabilityKeys.publicDay(date ?? "", duration),
+    queryFn: () => fetchPublicDay(date!, duration),
+    enabled: Boolean(date),
+    staleTime: STALE_TIME.openSlots,
+  });
+}
+
+/* --------------------------------- admin -------------------------------- */
+
+export function useAdminDay(date: string | null) {
+  return useQuery({
+    queryKey: availabilityKeys.adminDay(date ?? ""),
+    queryFn: () => fetchAdminDay(date!),
+    enabled: Boolean(date),
     staleTime: STALE_TIME.availability,
   });
 }
 
-export function useCreateSlots() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (payload: CreateSlotsPayload) => createSlots(payload),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: availabilityKeys.all }),
+export function useAdminMonth(month: string) {
+  return useQuery({
+    queryKey: availabilityKeys.adminMonth(month),
+    queryFn: () => fetchAdminMonth(month),
+    enabled: Boolean(month),
+    staleTime: STALE_TIME.availability,
   });
 }
 
-export function useSetSlotStatus() {
+export function useScheduleSettings() {
+  return useQuery({
+    queryKey: availabilityKeys.settings(),
+    queryFn: fetchScheduleSettings,
+    staleTime: STALE_TIME.availability,
+  });
+}
+
+function invalidate(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: availabilityKeys.all });
+}
+
+export function useSaveSchedule() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: UpdateSchedulePayload) => saveScheduleSettings(payload),
+    onSuccess: () => invalidate(queryClient),
+  });
+}
+
+export function useSaveDayOverride() {
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationFn: ({
-      id,
-      status,
+      date,
+      payload,
     }: {
-      id: string;
-      status: "OPEN" | "BLOCKED";
-    }) => setSlotStatus(id, status),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: availabilityKeys.all }),
+      date: string;
+      payload: DayOverridePayload;
+    }) => saveDayOverride(date, payload),
+    onSuccess: () => invalidate(queryClient),
   });
 }
 
-export function useDeleteSlot() {
+export function useClearDayOverride() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: string) => deleteSlot(id),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: availabilityKeys.all }),
+    mutationFn: (date: string) => clearDayOverride(date),
+    onSuccess: () => invalidate(queryClient),
   });
 }
 
-export function useCancelDay() {
+export function useCreateBlock() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (date: string) => cancelDay(date),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: availabilityKeys.all }),
+    mutationFn: (payload: CreateBlockPayload) => createBlock(payload),
+    onSuccess: () => invalidate(queryClient),
+  });
+}
+
+export function useDeleteBlock() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: string) => deleteBlock(id),
+    onSuccess: () => invalidate(queryClient),
   });
 }

@@ -1,242 +1,202 @@
 import type { Request, Response } from "express";
 
-import { prisma } from "../lib/prisma";
+import {
+  appointmentsForDay,
+  buildOpenTimes,
+  getAdminDay,
+  getDayState,
+  getMonthState,
+  getSchedule,
+  saveSchedule,
+  type ScheduleSettings,
+} from "../lib/availability";
 import { HttpError } from "../lib/http-error";
+import { prisma } from "../lib/prisma";
+import { studioTodayKey } from "../lib/timezone";
 import type {
-  CreateSlotsInput,
-  ListSlotsQuery,
-  UpdateSlotInput,
+  CreateBlockInput,
+  DayOverrideInput,
+  PublicDayQuery,
+  PublicMonthQuery,
+  ScheduleInput,
 } from "../validators/availability.schema";
 
-/**
- * The studio's timezone. Africa/Lagos = UTC+1 all year (no DST).
- * Change this number if the studio is somewhere else, e.g. UTC+0 = 0.
- */
-const STUDIO_UTC_OFFSET_MIN = 60;
-const DAY_MS = 86_400_000;
-
-/* ------------------------- timezone helpers ------------------------- */
-
-function studioDateKey(date: Date): string {
-  const shifted = new Date(date.getTime() + STUDIO_UTC_OFFSET_MIN * 60_000);
-  return shifted.toISOString().slice(0, 10);
+function noStore(res: Response): void {
+  res.setHeader("Cache-Control", "private, no-store");
 }
 
-function studioTime(date: Date): string {
-  const shifted = new Date(date.getTime() + STUDIO_UTC_OFFSET_MIN * 60_000);
-  return shifted.toISOString().slice(11, 16);
-}
+/* ------------------------- public: one day's times ------------------------ */
 
-/** "2026-11-02" + "13:00" (studio local) -> UTC Date */
-function studioToUtc(dateKey: string, time: string): Date {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  const [hours, minutes] = time.split(":").map(Number);
-  return new Date(
-    Date.UTC(year, month - 1, day, hours, minutes) -
-      STUDIO_UTC_OFFSET_MIN * 60_000
-  );
-}
-
-function dayStart(dateKey: string): Date {
-  return studioToUtc(dateKey, "00:00");
-}
-
-function dayEnd(dateKey: string): Date {
-  return new Date(dayStart(dateKey).getTime() + DAY_MS);
-}
-
-/* ------------------------------ DTO -------------------------------- */
-
-type SlotRow = {
-  id: string;
-  startAt: Date;
-  endAt: Date;
-  status: string;
-  note: string | null;
-  appointment?: { id: string } | null;
-};
-
-function toDto(slot: SlotRow) {
-  return {
-    id: slot.id,
-    date: studioDateKey(slot.startAt),
-    time: studioTime(slot.startAt),
-    endTime: studioTime(slot.endAt),
-    startAt: slot.startAt.toISOString(),
-    endAt: slot.endAt.toISOString(),
-    durationMin: Math.round(
-      (slot.endAt.getTime() - slot.startAt.getTime()) / 60_000
-    ),
-    status: slot.status,
-    note: slot.note,
-    appointmentId: slot.appointment?.id ?? null,
-  };
-}
-
-/* --------------------------- GET /api/availability --------------------------- */
-/** Public: only OPEN slots, today onwards. */
-export async function listOpenSlots(
+export async function getPublicDay(
   req: Request,
   res: Response
 ): Promise<void> {
-  const query = req.query as unknown as ListSlotsQuery;
+  const query = req.query as unknown as PublicDayQuery;
+  const dateKey = query.date ?? studioTodayKey();
+  const duration = query.duration ?? 30;
 
-  const from = query.from
-    ? dayStart(query.from)
-    : dayStart(studioDateKey(new Date()));
-  const to = query.to
-    ? dayEnd(query.to)
-    : new Date(from.getTime() + 60 * DAY_MS);
-
-  const slots = await prisma.availabilitySlot.findMany({
-    where: {
-      status: "OPEN",
-      startAt: { gte: from, lt: to },
-    },
-    orderBy: { startAt: "asc" },
-    include: { appointment: { select: { id: true } } },
+  const state = await getDayState(dateKey);
+  const appointments = await appointmentsForDay(dateKey);
+  const times = buildOpenTimes(state, {
+    durationMin: duration,
+    appointments,
   });
 
-  const visible = query.minDuration
-    ? slots.filter(
-        (slot) =>
-          slot.endAt.getTime() - slot.startAt.getTime() >=
-          query.minDuration! * 60_000
-      )
-    : slots;
-
-  res.json({ data: visible.map(toDto) });
-}
-
-/* ------------------------- GET /api/availability/all ------------------------- */
-/** Admin: every slot, including BOOKED and BLOCKED. */
-export async function listAllSlots(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const query = req.query as unknown as ListSlotsQuery;
-
-  const from = query.from
-    ? dayStart(query.from)
-    : dayStart(studioDateKey(new Date()));
-  const to = query.to
-    ? dayEnd(query.to)
-    : new Date(from.getTime() + 60 * DAY_MS);
-
-  const slots = await prisma.availabilitySlot.findMany({
-    where: {
-      startAt: { gte: from, lt: to },
-      ...(query.status ? { status: query.status } : {}),
-    },
-    orderBy: { startAt: "asc" },
-    include: { appointment: { select: { id: true } } },
-  });
-
-  res.json({ data: slots.map(toDto) });
-}
-
-/* ------------------------- POST /api/availability ------------------------- */
-/** Admin: create one or many OPEN slots. Duplicates are skipped. */
-export async function createSlots(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const input = req.body as CreateSlotsInput;
-
-  const data = input.slots.map((slot) => {
-    const startAt = studioToUtc(slot.date, slot.time);
-    const minutes = slot.durationMin ?? input.durationMin;
-
-    return {
-      startAt,
-      endAt: new Date(startAt.getTime() + minutes * 60_000),
-      note: input.note ?? null,
-      staffId: input.staffId ?? null,
-    };
-  });
-
-  const result = await prisma.availabilitySlot.createMany({
-    data,
-    skipDuplicates: true,
-  });
-
-  res.status(201).json({
-    data: {
-      created: result.count,
-      skipped: data.length - result.count,
-    },
-  });
-}
-
-/* ----------------------- PATCH /api/availability/:id ----------------------- */
-/** Admin: close (BLOCKED) or reopen (OPEN) a single slot. */
-export async function updateSlot(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const id = String(req.params.id);
-  const input = req.body as UpdateSlotInput;
-
-  const slot = await prisma.availabilitySlot.findUnique({ where: { id } });
-  if (!slot) throw new HttpError(404, "Slot not found");
-
-  if (slot.status === "BOOKED") {
-    throw new HttpError(
-      409,
-      "This slot has a booking. Cancel the booking first — the slot will reopen automatically."
-    );
-  }
-
-  const updated = await prisma.availabilitySlot.update({
-    where: { id },
-    data: { status: input.status },
-    include: { appointment: { select: { id: true } } },
-  });
-
-  res.json({ data: toDto(updated) });
-}
-
-/* ---------------------- DELETE /api/availability/:id ---------------------- */
-/** Admin: permanently remove a slot. Booked slots must be cancelled first. */
-export async function deleteSlot(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const id = String(req.params.id);
-
-  const slot = await prisma.availabilitySlot.findUnique({ where: { id } });
-  if (!slot) throw new HttpError(404, "Slot not found");
-
-  if (slot.status === "BOOKED") {
-    throw new HttpError(
-      409,
-      "This slot has a booking. Cancel the booking first."
-    );
-  }
-
-  await prisma.availabilitySlot.delete({ where: { id } });
-  res.status(204).send();
-}
-
-/* ------------------- POST /api/availability/cancel-day ------------------- */
-/** Admin: close every OPEN slot on one date (holiday / day off). */
-export async function cancelDay(
-  req: Request,
-  res: Response
-): Promise<void> {
-  const { date } = req.body as { date: string };
-  const range = { gte: dayStart(date), lt: dayEnd(date) };
-
-  const result = await prisma.availabilitySlot.updateMany({
-    where: { startAt: range, status: "OPEN" },
-    data: { status: "BLOCKED" },
-  });
-
-  const booked = await prisma.availabilitySlot.count({
-    where: { startAt: range, status: "BOOKED" },
-  });
-
+  noStore(res);
   res.json({
-    data: { date, closed: result.count, bookedLeftAlone: booked },
+    data: {
+      date: state.date,
+      isOpen: state.reason === "open",
+      reason: state.reason,
+      openTime: state.openTime,
+      closeTime: state.closeTime,
+      stepMinutes: state.stepMinutes,
+      note: state.note,
+      blocks: state.blocks,
+      times,
+    },
   });
+}
+
+/* ------------------------ public: month calendar ------------------------ */
+
+export async function getPublicMonth(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const query = req.query as unknown as PublicMonthQuery;
+  const month = query.month ?? studioTodayKey().slice(0, 7);
+
+  const data = await getMonthState(month, {
+    durationMin: query.duration ?? 30,
+  });
+
+  noStore(res);
+  res.json({ data });
+}
+
+/* ----------------------------- admin settings ---------------------------- */
+
+export async function getSettings(
+  _req: Request,
+  res: Response
+): Promise<void> {
+  noStore(res);
+  res.json({ data: await getSchedule() });
+}
+
+export async function updateSettings(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const input = req.body as ScheduleInput;
+  const data = await saveSchedule(input as ScheduleSettings);
+  noStore(res);
+  res.json({ data });
+}
+
+/* ------------------------------ admin month ------------------------------ */
+
+export async function getAdminMonth(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const query = req.query as unknown as { month: string };
+  const data = await getMonthState(query.month, { admin: true });
+  noStore(res);
+  res.json({ data });
+}
+
+/* ------------------------------- admin day ------------------------------- */
+
+export async function getAdminDayHandler(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const query = req.query as unknown as { date: string };
+  const data = await getAdminDay(query.date);
+  noStore(res);
+  res.json({ data });
+}
+
+export async function upsertDayOverride(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const query = req.query as unknown as { date: string };
+  const input = req.body as DayOverrideInput;
+
+  await prisma.dayOverride.upsert({
+    where: { date: query.date },
+    create: {
+      date: query.date,
+      isClosed: input.isClosed,
+      openTime: input.openTime ?? null,
+      closeTime: input.closeTime ?? null,
+      stepMinutes: input.stepMinutes ?? null,
+      note: input.note ?? null,
+    },
+    update: {
+      isClosed: input.isClosed,
+      openTime: input.openTime ?? null,
+      closeTime: input.closeTime ?? null,
+      stepMinutes: input.stepMinutes ?? null,
+      note: input.note ?? null,
+    },
+  });
+
+  const data = await getAdminDay(query.date);
+  noStore(res);
+  res.json({ data });
+}
+
+export async function deleteDayOverride(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const query = req.query as unknown as { date: string };
+
+  await prisma.dayOverride.deleteMany({ where: { date: query.date } });
+
+  const data = await getAdminDay(query.date);
+  noStore(res);
+  res.json({ data });
+}
+
+/* ------------------------------- time blocks ----------------------------- */
+
+export async function createBlock(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const input = req.body as CreateBlockInput;
+
+  await prisma.scheduleBlock.create({
+    data: {
+      date: input.date,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      note: input.note ?? null,
+    },
+  });
+
+  const data = await getAdminDay(input.date);
+  noStore(res);
+  res.status(201).json({ data });
+}
+
+export async function deleteBlock(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const id = String(req.params.id);
+
+  const block = await prisma.scheduleBlock.findUnique({ where: { id } });
+  if (!block) throw new HttpError(404, "That closed time no longer exists.");
+
+  await prisma.scheduleBlock.delete({ where: { id } });
+
+  const data = await getAdminDay(block.date);
+  noStore(res);
+  res.json({ data });
 }

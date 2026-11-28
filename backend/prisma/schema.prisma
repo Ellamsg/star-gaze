@@ -75,22 +75,64 @@ enum SlotStatus {
 }
 
 model AvailabilitySlot {
-  id          String      @id @default(cuid())
+  id          String       @id @default(cuid())
   startAt     DateTime // store UTC
   endAt       DateTime // startAt + slot length
-  status      SlotStatus  @default(OPEN)
+  status      SlotStatus   @default(OPEN)
   note        String? // "Lunch break", "Closed for training"
   staffId     String? // leave null for a single-chair studio
-  staff       Staff?      @relation(fields: [staffId], references: [id])
+  staff       Staff?       @relation(fields: [staffId], references: [id])
   appointment Appointment?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   // One slot per time. If you add multiple staff later, change this to
   // @@unique([startAt, staffId])
   @@unique([startAt])
   @@index([startAt, status])
   @@map("availability_slots")
+}
+
+/// One row for the whole studio: the timetable every day starts from.
+/// Overrides and blocks are the only exceptions the admin has to touch.
+model StudioSchedule {
+  id           String   @id @default("default")
+  openTime     String   @db.VarChar(5) // "09:00" studio-local
+  closeTime    String   @db.VarChar(5) // "19:00" studio-local
+  stepMinutes  Int      @default(30) // start times every 30 minutes
+  openWeekdays Int[]    @default([0, 1, 2, 3, 4, 5, 6]) // 0 = Sunday
+  horizonDays  Int      @default(180) // how far ahead clients can book
+  updatedAt    DateTime @updatedAt
+
+  @@map("studio_schedule")
+}
+
+/// A single date that differs from the default week: closed, or custom hours.
+model DayOverride {
+  id          String   @id @default(cuid())
+  date        String   @unique @db.VarChar(10) // "2026-12-25"
+  isClosed    Boolean  @default(false)
+  openTime    String?  @db.VarChar(5)
+  closeTime   String?  @db.VarChar(5)
+  stepMinutes Int?
+  note        String?  @db.VarChar(300)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("day_overrides")
+}
+
+/// A closed window inside one date, e.g. lunch 13:00–14:00.
+model ScheduleBlock {
+  id        String   @id @default(cuid())
+  date      String   @db.VarChar(10)
+  startTime String   @db.VarChar(5)
+  endTime   String   @db.VarChar(5)
+  note      String?  @db.VarChar(300)
+  createdAt DateTime @default(now())
+
+  @@index([date])
+  @@map("schedule_blocks")
 }
 
 model AppointmentItem {
@@ -121,15 +163,15 @@ model Category {
 }
 
 model Service {
-  id           String        @id @default(cuid())
+  id           String            @id @default(cuid())
   name         String
-  slug         String        @unique
+  slug         String            @unique
   durationMin  Int
-  price        Decimal       @db.Decimal(10, 2)
-  active       Boolean       @default(true)
-  description  String?       @db.Text
+  price        Decimal           @db.Decimal(10, 2)
+  active       Boolean           @default(true)
+  description  String?           @db.Text
   categoryId   String?
-  category     Category?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  category     Category?         @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   appointments Appointment[]
   items        AppointmentItem[]
 
@@ -144,23 +186,23 @@ enum AdminRole {
 }
 
 model Admin {
-  id                  String    @id @default(cuid())
-  email               String    @unique @db.VarChar(320)
+  id                  String          @id @default(cuid())
+  email               String          @unique @db.VarChar(320)
   name                String
   passwordHash        String
-  role                AdminRole @default(OWNER)
-  staffId             String?   @unique // link a tech account to Staff row
-  staff               Staff?    @relation(fields: [staffId], references: [id])
-  isActive            Boolean   @default(true)
-  mustChangePassword  Boolean   @default(false)
-  failedLoginAttempts Int       @default(0)
+  role                AdminRole       @default(OWNER)
+  staffId             String?         @unique // link a tech account to Staff row
+  staff               Staff?          @relation(fields: [staffId], references: [id])
+  isActive            Boolean         @default(true)
+  mustChangePassword  Boolean         @default(false)
+  failedLoginAttempts Int             @default(0)
   lockedUntil         DateTime?
   passwordChangedAt   DateTime?
   lastLoginAt         DateTime?
   sessions            AdminSession[]
   auditLogs           AdminAuditLog[]
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
 
   @@map("admins")
 }
@@ -206,9 +248,9 @@ model Staff {
   admin             Admin?
   appointments      Appointment[]
   availabilitySlots AvailabilitySlot[]
+
   @@map("staff")
 }
-
 
 model AppointmentPhoto {
   id            String      @id @default(cuid())
